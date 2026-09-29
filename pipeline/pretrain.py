@@ -23,6 +23,18 @@ from typing import Dict, Iterator, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 import torch
 from datasets import load_dataset
 from torch.utils.data import DataLoader, Dataset, IterableDataset
@@ -212,6 +224,9 @@ def run_pretrain(
     output_dir: str = "checkpoints/pretrain",
     text_file: Optional[str] = None,
     resume: Optional[str] = None,
+    use_wandb: bool = False,
+    wandb_project: str = "jerboa",
+    wandb_run_name: Optional[str] = None,
 ):
     """Unified pre-training entry point."""
     os.makedirs(output_dir, exist_ok=True)
@@ -276,6 +291,27 @@ def run_pretrain(
         model = JerboaForCausalLM(config)
 
     model.to(device)
+
+    if use_wandb:
+        if not WANDB_AVAILABLE:
+            print("[Warning] wandb is not installed. Falling back to local logging.")
+            use_wandb = False
+        else:
+            run_name = wandb_run_name or f"pretrain-{mode}-{time.strftime('%Y%m%d-%H%M%S')}"
+            wandb.init(
+                project=wandb_project,
+                name=run_name,
+                config={
+                    "stage": "pretrain",
+                    "mode": mode,
+                    "batch_size": batch_size,
+                    "grad_accum": grad_accum_steps,
+                    "seq_len": seq_len,
+                    "lr": lr,
+                    "device": str(device),
+                    "parameters": sum(p.numel() for p in model.parameters()),
+                },
+            )
 
     # 2. Mode execution
     if text_file and os.path.exists(text_file):
@@ -346,6 +382,7 @@ def run_pretrain(
                     step_loss = outputs.loss.item()
                     chunk_losses.append(step_loss)
 
+                    cur_tokens = cumulative_tokens + int((step_in_chunk / steps_per_chunk) * chunk_tokens)
                     log_metrics_record({
                         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                         "global_step": global_step,
@@ -353,14 +390,31 @@ def run_pretrain(
                         "loss": round(step_loss, 4),
                         "perplexity": round(float(torch.exp(torch.tensor(step_loss))), 2),
                         "lr": scheduler.get_last_lr()[0],
-                        "cumulative_tokens": cumulative_tokens + int((step_in_chunk / steps_per_chunk) * chunk_tokens),
+                        "cumulative_tokens": cur_tokens,
                     })
+
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": step_loss,
+                            "train/perplexity": float(torch.exp(torch.tensor(step_loss))),
+                            "train/lr": scheduler.get_last_lr()[0],
+                            "train/cumulative_tokens": cur_tokens,
+                            "global_step": global_step,
+                        })
 
                 step_in_chunk += 1
 
             cumulative_tokens += chunk_tokens
             chunk_elapsed = time.time() - chunk_start_time
             avg_chunk_loss = sum(chunk_losses) / max(len(chunk_losses), 1)
+
+            if use_wandb:
+                wandb.log({
+                    "chunk/avg_loss": avg_chunk_loss,
+                    "chunk/elapsed_sec": chunk_elapsed,
+                    "chunk/tokens": chunk_tokens,
+                    "global_step": global_step,
+                })
 
             print(f"\n[{chunk_name}] Steps: {steps_per_chunk} | Avg Loss: {avg_chunk_loss:.4f} | Time: {chunk_elapsed:.1f}s")
 
@@ -439,7 +493,25 @@ def run_pretrain(
                 if step % 5 == 0 or step == max_steps:
                     elapsed = time.time() - start_time
                     tok_per_sec = (step * batch_size * grad_accum_steps * seq_len) / max(elapsed, 1e-4)
-                    print(f"Step {step:3d}/{max_steps} | Loss: {running_loss/accum_count:.4f} | Speed: {tok_per_sec:.1f} tok/s")
+                    cur_loss = running_loss / accum_count
+                    print(f"Step {step:3d}/{max_steps} | Loss: {cur_loss:.4f} | Speed: {tok_per_sec:.1f} tok/s")
+                    log_metrics_record({
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "global_step": step,
+                        "chunk": "stream",
+                        "loss": round(cur_loss, 4),
+                        "perplexity": round(float(torch.exp(torch.tensor(cur_loss))), 2),
+                        "lr": scheduler.get_last_lr()[0],
+                        "tokens_per_sec": round(tok_per_sec, 1),
+                    })
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": cur_loss,
+                            "train/perplexity": float(torch.exp(torch.tensor(cur_loss))),
+                            "train/lr": scheduler.get_last_lr()[0],
+                            "train/tokens_per_sec": tok_per_sec,
+                            "global_step": step,
+                        })
 
                 running_loss = 0.0
                 accum_count = 0
@@ -456,7 +528,9 @@ def run_pretrain(
         )
         model.train()
         step = 0
+        running_loss = 0.0
         accum_count = 0
+        start_time = time.time()
         data_iter = iter(dataloader)
 
         while step < max_steps:
@@ -471,6 +545,7 @@ def run_pretrain(
             outputs = model(input_ids=input_ids, labels=labels)
             loss = outputs.loss / grad_accum_steps
             loss.backward()
+            running_loss += loss.item() * grad_accum_steps
             accum_count += 1
 
             if accum_count % grad_accum_steps == 0:
@@ -479,7 +554,35 @@ def run_pretrain(
                 scheduler.step()
                 optimizer.zero_grad()
                 step += 1
+
+                if step % 5 == 0 or step == max_steps:
+                    elapsed = time.time() - start_time
+                    tok_per_sec = (step * batch_size * grad_accum_steps * seq_len) / max(elapsed, 1e-4)
+                    cur_loss = running_loss / accum_count
+                    print(f"Step {step:3d}/{max_steps} | Loss: {cur_loss:.4f} | Speed: {tok_per_sec:.1f} tok/s")
+                    log_metrics_record({
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "global_step": step,
+                        "chunk": "file",
+                        "loss": round(cur_loss, 4),
+                        "perplexity": round(float(torch.exp(torch.tensor(cur_loss))), 2),
+                        "lr": scheduler.get_last_lr()[0],
+                        "tokens_per_sec": round(tok_per_sec, 1),
+                    })
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": cur_loss,
+                            "train/perplexity": float(torch.exp(torch.tensor(cur_loss))),
+                            "train/lr": scheduler.get_last_lr()[0],
+                            "train/tokens_per_sec": tok_per_sec,
+                            "global_step": step,
+                        })
+
+                running_loss = 0.0
                 accum_count = 0
+
+    if use_wandb:
+        wandb.finish()
 
     # 3. Base model save to checkpoints/pretrain/model
     final_path = os.path.join(output_dir, "model")
@@ -504,6 +607,9 @@ if __name__ == "__main__":
     parser.add_argument("--text_file", type=str, default=default_text, help="Path to local text file (triggers file mode)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/pretrain", help="Directory to save checkpoints")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint directory or state file to resume from")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
+    parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
+    parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
 
     run_pretrain(
@@ -519,4 +625,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         text_file=args.text_file,
         resume=args.resume,
+        use_wandb=args.wandb,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run,
     )

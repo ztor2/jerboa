@@ -16,6 +16,18 @@ from typing import Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+try:
+    import wandb
+    WANDB_AVAILABLE = True
+except ImportError:
+    WANDB_AVAILABLE = False
+
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -122,6 +134,9 @@ def run_sft(
     batch_size: int = 2,
     lr: float = 2e-4,
     max_length: int = 256,
+    use_wandb: bool = False,
+    wandb_project: str = "jerboa",
+    wandb_run_name: Optional[str] = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -149,6 +164,27 @@ def run_sft(
 
     model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    if use_wandb:
+        if not WANDB_AVAILABLE:
+            print("[Warning] wandb is not installed. Continuing with console logging only.")
+            use_wandb = False
+        else:
+            run_name = wandb_run_name or f"sft-{time.strftime('%Y%m%d-%H%M%S')}"
+            wandb.init(
+                project=wandb_project,
+                name=run_name,
+                config={
+                    "stage": "sft",
+                    "base_model": model_path_or_name,
+                    "epochs": epochs,
+                    "batch_size": batch_size,
+                    "lr": lr,
+                    "max_length": max_length,
+                    "device": str(device),
+                    "parameters": sum(p.numel() for p in model.parameters()),
+                },
+            )
 
     # 2. Prepare Data
     if data_path and os.path.exists(data_path):
@@ -184,14 +220,30 @@ def run_sft(
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            epoch_loss += loss.item()
+            step_loss = loss.item()
+            epoch_loss += step_loss
             step += 1
 
             if step % 5 == 0:
-                print(f"Epoch {epoch}/{epochs} | Step {step:3d} | Loss: {loss.item():.4f}")
+                print(f"Epoch {epoch}/{epochs} | Step {step:3d} | Loss: {step_loss:.4f}")
+
+            if use_wandb:
+                wandb.log({
+                    "train/loss": step_loss,
+                    "train/epoch": epoch,
+                    "global_step": step,
+                })
 
         avg_loss = epoch_loss / len(dataloader)
         print(f"=== Epoch {epoch} Complete | Average Loss: {avg_loss:.4f} ===")
+        if use_wandb:
+            wandb.log({
+                "train/avg_epoch_loss": avg_loss,
+                "epoch": epoch,
+            })
+
+    if use_wandb:
+        wandb.finish()
 
     # 5. Save Model
     final_path = os.path.join(output_dir, "model")
@@ -211,6 +263,9 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--output_dir", type=str, default="checkpoints/sft")
     parser.add_argument("--data", type=str, default=default_data, help="JSON dataset path")
+    parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
+    parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
+    parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
 
     run_sft(
@@ -220,4 +275,7 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        use_wandb=args.wandb,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run,
     )

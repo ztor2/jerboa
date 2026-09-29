@@ -90,18 +90,23 @@ flowchart LR
 # Default rolling buffer pre-training
 python pipeline/pretrain.py --chunks 5 --docs_per_chunk 500 --steps_per_chunk 15
 
+# Pre-train with live W&B tracking
+python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"
+
 # Resume from latest checkpoint
 python pipeline/pretrain.py --resume auto --chunks 5
 
-# View training lineage ledger & loss curves
+# View training lineage ledger & loss curves locally
 python scripts/view_history.py
 ```
 
 ### ② Supervised Fine-Tuning (`pipeline/sft.py`)
 - Computes loss **strictly on assistant responses** (`labels = -100` for system and user tokens) using ChatML formatting.
+- Supports optional W&B tracking via `--wandb`.
 
 ```bash
-python pipeline/sft.py --model checkpoints/pretrain/model --data data/sft/sample.json --epochs 3
+# SFT on local checkpoint or Hugging Face base
+python pipeline/sft.py --model checkpoints/pretrain/model --data data/sft/sample.json --epochs 3 --wandb
 ```
 
 ### ③ Direct Preference Optimization (`pipeline/rl_dpo.py`)
