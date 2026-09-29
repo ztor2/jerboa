@@ -13,7 +13,11 @@ jerboa/
 │   ├── sft/                          # ChatML dialogues (sample.json)
 │   ├── dpo/                          # Pairwise preferences (sample.json)
 │   ├── grpo/                         # Verifiable reasoning problems (sample.json)
-│   ├── multimodal/                   # Image/Audio annotations (sample.json)
+│   ├── multimodal/                   # Granular multimodal partitions
+│   │   ├── image/                    # Image VQA & captioning (sample.json)
+│   │   ├── audio/                    # Speech & sound understanding (sample.json)
+│   │   ├── video/                    # Multi-frame video reasoning (sample.json)
+│   │   └── interleaved/              # Joint Vision + Audio pairs (sample.json)
 │   └── manifests/                    # SHA-256 lineage & training loss logs
 │
 └── checkpoints/                      # Model weights by stage
@@ -21,7 +25,10 @@ jerboa/
     ├── sft/model/                    # Supervised fine-tuned weights
     ├── dpo/model/                    # Direct preference aligned weights
     ├── grpo/model/                   # Reasoning aligned weights
-    └── multimodal/                   # stage_1.pt & stage_2.pt
+    └── multimodal/                   # Modular & unified checkpoints
+        ├── vision/projector.pt       # Vision-only projector (~3MB)
+        ├── audio/projector.pt        # Audio-only projector (~2MB)
+        └── unified/                  # stage_1.pt & stage_2.pt
 ```
 
 ### Schema Formats
@@ -31,7 +38,10 @@ jerboa/
 | **SFT** | `data/sft/sample.json` | `{"messages": [{"role": "system\|user\|assistant", "content": "..."}]}` |
 | **DPO** | `data/dpo/sample.json` | `{"prompt": "...", "chosen": "...", "rejected": "..."}` |
 | **GRPO** | `data/grpo/sample.json` | `{"prompt": "...<think>...</think><answer>X</answer>", "expected_answer": "...", "domain": "math"}` |
-| **Multimodal** | `data/multimodal/sample.json` | `{"id": "...", "image": "path.jpg", "audio": "path.wav", "conversations": [...]}` |
+| **MM: Image** | `data/multimodal/image/sample.json` | `{"id": "...", "image": "path.jpg", "conversations": [{"from": "human", "value": "<|image|>\n..."}, ...]}` |
+| **MM: Audio** | `data/multimodal/audio/sample.json` | `{"id": "...", "audio": "path.wav", "conversations": [{"from": "human", "value": "<|audio|>\n..."}, ...]}` |
+| **MM: Video** | `data/multimodal/video/sample.json` | `{"id": "...", "video": "path.mp4", "num_frames": 8, "conversations": [...]}` |
+| **MM: Interleaved** | `data/multimodal/interleaved/sample.json` | `{"id": "...", "image": "path.jpg", "audio": "path.wav", "conversations": [...]}` |
 
 ---
 
@@ -112,8 +122,16 @@ python pipeline/rl_grpo.py --model checkpoints/sft/model --data data/grpo/sample
 ### ⑤ Multimodal Alignment (`pipeline/train_multimodal.py`)
 - **Stage 1 (Projector Warmup)**: LLM and vision encoder frozen; trains vision & audio projectors.
 - **Stage 2 (Full Fine-tuning)**: End-to-end tuning of projectors and language backbone.
+- **Modular Training**: Train vision or audio projectors independently to save compute and enable modular serving.
 
 ```bash
+# Modular: Train Vision Projector only (~3MB module)
+python pipeline/train_multimodal.py --modality vision --epochs 2
+
+# Modular: Train Audio Projector only (~2MB module)
+python pipeline/train_multimodal.py --modality audio --epochs 2
+
+# Unified: Stage 1 Projector warmup & Stage 2 Full tuning
 python pipeline/train_multimodal.py --stage 1 --epochs 2
 python pipeline/train_multimodal.py --stage 2 --epochs 2
 ```

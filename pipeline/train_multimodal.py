@@ -91,6 +91,7 @@ def collate_multimodal(batch, pad_token_id: int):
 
 def run_multimodal_training(
     stage: int = 1,
+    modality: str = "unified",
     output_dir: str = "checkpoints/multimodal",
     epochs: int = 2,
     batch_size: int = 2,
@@ -124,9 +125,23 @@ def run_multimodal_training(
     total_params = sum(p.numel() for p in model.parameters())
     print(f"Jerboa-VL initialized: {total_params:,} parameters ({total_params/1e6:.2f}M)")
 
-    # Freeze stages
-    if stage == 1:
-        print("\n--- Stage 1: Projector Warmup (Freezing Vision Encoder and LLM) ---")
+    # Freeze stages based on modality & stage
+    if modality == "vision":
+        print("\n--- Modular Vision Training (Training Vision Projector Only) ---")
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.vision_projector.parameters():
+            p.requires_grad = True
+        trainable_params = list(model.vision_projector.parameters())
+    elif modality == "audio":
+        print("\n--- Modular Audio Training (Training Audio Projector Only) ---")
+        for p in model.parameters():
+            p.requires_grad = False
+        for p in model.audio_projector.parameters():
+            p.requires_grad = True
+        trainable_params = list(model.audio_projector.parameters())
+    elif stage == 1:
+        print("\n--- Unified Stage 1: Projector Warmup (Freezing Encoders & LLM) ---")
         for p in model.vision_encoder.parameters():
             p.requires_grad = False
         for p in model.audio_encoder.parameters():
@@ -135,13 +150,13 @@ def run_multimodal_training(
             p.requires_grad = False
         trainable_params = list(model.vision_projector.parameters()) + list(model.audio_projector.parameters())
     else:
-        print("\n--- Stage 2: Multimodal Fine-Tuning (Full Tuning) ---")
+        print("\n--- Unified Stage 2: Multimodal Fine-Tuning (Full Tuning) ---")
         for p in model.vision_encoder.parameters():
-            p.requires_grad = False  # Keep vision backbone stable
+            p.requires_grad = False
         trainable_params = [p for p in model.parameters() if p.requires_grad]
 
     trainable_count = sum(p.numel() for p in trainable_params)
-    print(f"Trainable parameters for Stage {stage}: {trainable_count:,} ({trainable_count/1e6:.2f}M)")
+    print(f"Trainable parameters ({modality.upper()}): {trainable_count:,} ({trainable_count/1e6:.2f}M)")
 
     dataset = SyntheticMultimodalDataset(tokenizer, num_samples=30)
     dataloader = DataLoader(
@@ -188,15 +203,33 @@ def run_multimodal_training(
         avg_loss = epoch_loss / len(dataloader)
         print(f"=== Epoch {epoch} Complete | Average Loss: {avg_loss:.4f} ===")
 
-    final_path = os.path.join(output_dir, f"stage_{stage}.pt")
-    torch.save(model.state_dict(), final_path)
-    print(f"\nMultimodal training stage {stage} completed in {time.time() - start_time:.2f}s! Saved to {final_path}")
+    # Modular checkpoint saving
+    if modality == "vision":
+        save_dir = os.path.join(output_dir, "vision")
+        os.makedirs(save_dir, exist_ok=True)
+        final_path = os.path.join(save_dir, "projector.pt")
+        torch.save(model.vision_projector.state_dict(), final_path)
+    elif modality == "audio":
+        save_dir = os.path.join(output_dir, "audio")
+        os.makedirs(save_dir, exist_ok=True)
+        final_path = os.path.join(save_dir, "projector.pt")
+        torch.save(model.audio_projector.state_dict(), final_path)
+    else:
+        save_dir = os.path.join(output_dir, "unified")
+        os.makedirs(save_dir, exist_ok=True)
+        final_path = os.path.join(save_dir, f"stage_{stage}.pt")
+        torch.save(model.state_dict(), final_path)
+        # root link for backward compatibility
+        torch.save(model.state_dict(), os.path.join(output_dir, f"stage_{stage}.pt"))
+
+    print(f"\nMultimodal training ({modality}) completed in {time.time() - start_time:.2f}s! Saved to {final_path}")
     return final_path
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Multimodal Training")
     parser.add_argument("--stage", type=int, default=1, choices=[1, 2], help="Stage 1 (projector) or Stage 2 (full)")
+    parser.add_argument("--modality", type=str, default="unified", choices=["unified", "vision", "audio"], help="Target modality")
     parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
@@ -205,6 +238,7 @@ if __name__ == "__main__":
 
     run_multimodal_training(
         stage=args.stage,
+        modality=args.modality,
         output_dir=args.output_dir,
         epochs=args.epochs,
         batch_size=args.batch_size,

@@ -34,6 +34,12 @@ python scripts/infer_multimodal.py --audio assets/speech.wav --prompt "Transcrib
 
 # Joint vision + audio reasoning
 python scripts/infer_multimodal.py --image assets/scene.jpg --audio assets/sound.wav --prompt "How does the audio relate to the visual scene?"
+
+# Modular checkpoint loading (Vision projector only)
+python scripts/infer_multimodal.py --checkpoint checkpoints/multimodal/vision/projector.pt --image assets/scene.jpg --prompt "Describe this."
+
+# Unified end-to-end checkpoint loading
+python scripts/infer_multimodal.py --checkpoint checkpoints/multimodal/unified/stage_2.pt --image assets/scene.jpg --audio assets/sound.wav --prompt "Analyze scene."
 ```
 
 ---

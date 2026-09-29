@@ -44,39 +44,91 @@ def init_all_checkpoints():
     # Pretrain steps buffer dir
     os.makedirs("checkpoints/pretrain/steps", exist_ok=True)
 
-    # Multimodal stages
+    # Multimodal stages (Modular & Unified)
     print("\n📦 Creating Multimodal architecture...")
-    mm_output_dir = "checkpoints/multimodal"
-    os.makedirs(mm_output_dir, exist_ok=True)
-
     mm_model = JerboaVLForConditionalGeneration(config)
-    
-    stage1_path = os.path.join(mm_output_dir, "stage_1.pt")
+
+    # 1. Vision Projector module
+    vision_dir = "checkpoints/multimodal/vision"
+    os.makedirs(vision_dir, exist_ok=True)
+    vision_proj_path = os.path.join(vision_dir, "projector.pt")
+    torch.save(mm_model.vision_projector.state_dict(), vision_proj_path)
+    print(f"💾 Saved Vision Projector module to '{vision_proj_path}'")
+
+    # 2. Audio Projector module
+    audio_dir = "checkpoints/multimodal/audio"
+    os.makedirs(audio_dir, exist_ok=True)
+    audio_proj_path = os.path.join(audio_dir, "projector.pt")
+    torch.save(mm_model.audio_projector.state_dict(), audio_proj_path)
+    print(f"💾 Saved Audio Projector module to '{audio_proj_path}'")
+
+    # 3. Unified End-to-End checkpoints
+    unified_dir = "checkpoints/multimodal/unified"
+    os.makedirs(unified_dir, exist_ok=True)
+    stage1_path = os.path.join(unified_dir, "stage_1.pt")
     torch.save(mm_model.state_dict(), stage1_path)
-    print(f"💾 Saved Multimodal Stage 1 checkpoint to '{stage1_path}'")
+    print(f"💾 Saved Unified Stage 1 checkpoint to '{stage1_path}'")
 
-    stage2_path = os.path.join(mm_output_dir, "stage_2.pt")
+    stage2_path = os.path.join(unified_dir, "stage_2.pt")
     torch.save(mm_model.state_dict(), stage2_path)
-    print(f"💾 Saved Multimodal Stage 2 checkpoint to '{stage2_path}'")
+    print(f"💾 Saved Unified Stage 2 checkpoint to '{stage2_path}'")
 
-    # Multimodal sample data if not present
-    mm_sample_path = "data/multimodal/sample.json"
-    if not os.path.exists(mm_sample_path):
-        os.makedirs(os.path.dirname(mm_sample_path), exist_ok=True)
-        sample_mm = [
+    # Keep root compatibility links/files
+    torch.save(mm_model.state_dict(), "checkpoints/multimodal/stage_1.pt")
+    torch.save(mm_model.state_dict(), "checkpoints/multimodal/stage_2.pt")
+
+    # Multimodal Granular Dataset Samples
+    mm_datasets = {
+        "data/multimodal/image/sample.json": [
             {
-                "id": "mm_001",
-                "image": "data/multimodal/images/scene.jpg",
-                "audio": "data/multimodal/audio/clip.wav",
+                "id": "img_001",
+                "image": "data/multimodal/image/sample.jpg",
                 "conversations": [
-                    {"from": "human", "value": "<|image|><|audio|>\nAnalyze this scene."},
-                    {"from": "gpt", "value": "The visual and audio cues indicate..."}
+                    {"from": "human", "value": "<|image|>\nDescribe this scene in detail."},
+                    {"from": "gpt", "value": "A serene landscape with clear skies and green hills."}
+                ]
+            }
+        ],
+        "data/multimodal/audio/sample.json": [
+            {
+                "id": "aud_001",
+                "audio": "data/multimodal/audio/sample.wav",
+                "conversations": [
+                    {"from": "human", "value": "<|audio|>\nTranscribe and analyze this sound clip."},
+                    {"from": "gpt", "value": "Ambient birds chirping in a quiet forest environment."}
+                ]
+            }
+        ],
+        "data/multimodal/video/sample.json": [
+            {
+                "id": "vid_001",
+                "video": "data/multimodal/video/sample.mp4",
+                "num_frames": 8,
+                "conversations": [
+                    {"from": "human", "value": "<|image|><|image|><|image|><|image|>\nSummarize the action in this video clip."},
+                    {"from": "gpt", "value": "A high-speed train accelerates out of the station across the bridge."}
+                ]
+            }
+        ],
+        "data/multimodal/interleaved/sample.json": [
+            {
+                "id": "intl_001",
+                "image": "data/multimodal/interleaved/scene.jpg",
+                "audio": "data/multimodal/interleaved/clip.wav",
+                "conversations": [
+                    {"from": "human", "value": "<|image|><|audio|>\nHow does the audio relate to the visual scene?"},
+                    {"from": "gpt", "value": "The visual cues show ocean waves, corresponding to the crashing wave sounds."}
                 ]
             }
         ]
-        with open(mm_sample_path, "w", encoding="utf-8") as f:
-            json.dump(sample_mm, f, indent=2, ensure_ascii=False)
-        print(f"📄 Created multimodal sample spec at '{mm_sample_path}'")
+    }
+
+    for path, sample_data in mm_datasets.items():
+        if not os.path.exists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(sample_data, f, indent=2, ensure_ascii=False)
+            print(f"📄 Created dataset spec at '{path}'")
 
     # Manifests
     os.makedirs("data/manifests", exist_ok=True)

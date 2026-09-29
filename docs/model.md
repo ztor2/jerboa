@@ -79,3 +79,4 @@ flowchart LR
 - **Vision**: ViT encoder with $2\times 2$ spatial pooling compressing 196 patches into **49 tokens**, minimizing multimodal prefill latency.
 - **Audio**: 80-channel log-Mel spectrogram encoder with 1D convolution downsampling.
 - **Alignment**: 2-layer MLP projectors align visual and acoustic feature representations into LLM token embedding space.
+- **Modular Architecture**: Vision and Audio projectors can be trained, saved, and loaded independently as lightweight plug-in modules (`projector.pt` ~2–3MB).

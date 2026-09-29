@@ -88,7 +88,17 @@ def run_multimodal_inference(
     if checkpoint and os.path.exists(checkpoint):
         print(f"Loading checkpoint weights from '{checkpoint}'...")
         state_dict = torch.load(checkpoint, map_location="cpu")
-        model.load_state_dict(state_dict, strict=False)
+        if any(k.startswith("linear_") for k in state_dict.keys()):
+            if "vision" in checkpoint:
+                model.vision_projector.load_state_dict(state_dict, strict=False)
+                print("  └ Loaded modular Vision Projector.")
+            elif "audio" in checkpoint:
+                model.audio_projector.load_state_dict(state_dict, strict=False)
+                print("  └ Loaded modular Audio Projector.")
+            else:
+                model.load_state_dict(state_dict, strict=False)
+        else:
+            model.load_state_dict(state_dict, strict=False)
 
     model.to(device)
     model.eval()
