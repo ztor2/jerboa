@@ -1,0 +1,134 @@
+# Training & Data Lifecycle
+
+JerboaLM follows a strict 1:1 symmetric architecture between dataset partitions (`data/`) and model weight checkpoints (`checkpoints/`).
+
+---
+
+## 1. Data & Checkpoint Mapping
+
+```
+jerboa/
+├── data/                             # Dataset storage by stage
+│   ├── pretrain/                     # Raw text (FineWeb-Edu, TinyStories)
+│   ├── sft/                          # ChatML dialogues (sample.json)
+│   ├── dpo/                          # Pairwise preferences (sample.json)
+│   ├── grpo/                         # Verifiable reasoning problems (sample.json)
+│   ├── multimodal/                   # Image/Audio annotations (sample.json)
+│   └── manifests/                    # SHA-256 lineage & training loss logs
+│
+└── checkpoints/                      # Model weights by stage
+    ├── pretrain/model/               # Base weights & tokenizer
+    ├── sft/model/                    # Supervised fine-tuned weights
+    ├── dpo/model/                    # Direct preference aligned weights
+    ├── grpo/model/                   # Reasoning aligned weights
+    └── multimodal/                   # stage_1.pt & stage_2.pt
+```
+
+### Schema Formats
+
+| Stage | Path | Schema Structure |
+| :--- | :--- | :--- |
+| **SFT** | `data/sft/sample.json` | `{"messages": [{"role": "system\|user\|assistant", "content": "..."}]}` |
+| **DPO** | `data/dpo/sample.json` | `{"prompt": "...", "chosen": "...", "rejected": "..."}` |
+| **GRPO** | `data/grpo/sample.json` | `{"prompt": "...<think>...</think><answer>X</answer>", "expected_answer": "...", "domain": "math"}` |
+| **Multimodal** | `data/multimodal/sample.json` | `{"id": "...", "image": "path.jpg", "audio": "path.wav", "conversations": [...]}` |
+
+---
+
+## 2. Data Preparation
+
+Stream open-source datasets and format them into target schemas:
+
+```bash
+# Pre-training: FineWeb-Edu educational subset (score >= 3)
+python scripts/prepare_data.py --stage pretrain --source fineweb-edu --samples 1000
+
+# SFT: Multi-turn instruction dialogues (UltraChat)
+python scripts/prepare_data.py --stage sft --samples 200
+
+# DPO: Human pairwise preferences (UltraFeedback)
+python scripts/prepare_data.py --stage dpo --samples 200
+
+# GRPO: Verifiable math reasoning (GSM8K)
+python scripts/prepare_data.py --stage grpo --samples 200
+
+# Prepare all baseline datasets at once
+python scripts/prepare_data.py --stage all
+```
+
+---
+
+## 3. Training Pipelines
+
+```mermaid
+flowchart LR
+    A["Raw Corpus"] --> PRE["1. Pre-training<br/>(Rolling Buffer)"]
+    PRE --> B["checkpoints/pretrain/model"]
+    B --> SFT["2. SFT<br/>(Response Masking)"]
+    SFT --> C["checkpoints/sft/model"]
+    C --> RL["3. RL Alignment<br/>(GRPO / DPO)"]
+    RL --> D["checkpoints/grpo or dpo/model"]
+    C --> MM["4. Multimodal<br/>(2-Stage Tuning)"]
+    MM --> E["checkpoints/multimodal"]
+```
+
+### ① Pre-training (`pipeline/pretrain.py`)
+- **Rolling-Buffer Mode**: Streams chunks (e.g., 500 docs), calculates SHA-256 hashes, logs token counts, trains on MPS, and removes raw text to maintain near-zero disk overhead.
+- **In-Memory / File Modes**: `--mode stream` (0 MB disk) or `--text_file <path>`.
+
+```bash
+# Default rolling buffer pre-training
+python pipeline/pretrain.py --chunks 5 --docs_per_chunk 500 --steps_per_chunk 15
+
+# Resume from latest checkpoint
+python pipeline/pretrain.py --resume auto --chunks 5
+
+# View training lineage ledger & loss curves
+python scripts/view_history.py
+```
+
+### ② Supervised Fine-Tuning (`pipeline/sft.py`)
+- Computes loss **strictly on assistant responses** (`labels = -100` for system and user tokens) using ChatML formatting.
+
+```bash
+python pipeline/sft.py --model checkpoints/pretrain/model --data data/sft/sample.json --epochs 3
+```
+
+### ③ Direct Preference Optimization (`pipeline/rl_dpo.py`)
+- Implicit policy optimization with frozen reference model ($\pi_{ref}$):
+  $$\mathcal{L}_{DPO}(\pi_\theta; \pi_{ref}) = -\mathbb{E}\left[\log \sigma\left(\beta \log \frac{\pi_\theta(y_w|x)}{\pi_{ref}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{ref}(y_l|x)}\right)\right]$$
+
+```bash
+python pipeline/rl_dpo.py --model checkpoints/sft/model --data data/dpo/sample.json --steps 30 --beta 0.1
+```
+
+### ④ Group Relative Policy Optimization (`pipeline/rl_grpo.py`)
+- DeepSeek-R1 style online reasoning alignment. Samples $G$ candidate outputs per prompt, scores via programmatic rule-based rewards, and computes group relative advantages without a Critic model.
+
+```bash
+python pipeline/rl_grpo.py --model checkpoints/sft/model --data data/grpo/sample.json --steps 20 --group_size 4
+```
+
+### ⑤ Multimodal Alignment (`pipeline/train_multimodal.py`)
+- **Stage 1 (Projector Warmup)**: LLM and vision encoder frozen; trains vision & audio projectors.
+- **Stage 2 (Full Fine-tuning)**: End-to-end tuning of projectors and language backbone.
+
+```bash
+python pipeline/train_multimodal.py --stage 1 --epochs 2
+python pipeline/train_multimodal.py --stage 2 --epochs 2
+```
+
+---
+
+## 4. Mac Long-Running Training Guide
+
+To run extended training on Apple Silicon while keeping the lid open for airflow without screen wear or light pollution:
+
+```bash
+# Prevent system sleep + turn display off immediately + auto-resume training
+(sleep 2 && pmset displaysleepnow) & caffeinate -s python pipeline/pretrain.py --resume auto
+```
+
+- **`caffeinate -s`**: Inhibits system idle sleep while connected to AC power.
+- **`pmset displaysleepnow`**: Powers off display backlight instantly. Touch trackpad or press any key to wake.
+- **Thermal Tip**: Elevate laptop base 1–2 cm above desk surface to reduce operating temperature by 7–10°C.
