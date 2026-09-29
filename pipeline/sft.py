@@ -128,12 +128,12 @@ def run_sft(
     print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'})")
 
     # 1. Load Tokenizer & Model
-    if model_path_or_name and os.path.exists(model_path_or_name):
-        print(f"Loading pretrained model from {model_path_or_name}...")
+    try:
+        print(f"Loading pretrained model from '{model_path_or_name}' (local or Hugging Face Hub)...")
         model = JerboaForCausalLM.from_pretrained(model_path_or_name)
         tokenizer = get_default_tokenizer(model_path_or_name)
-    else:
-        print("Initializing new Jerboa model for SFT demonstration...")
+    except Exception as e:
+        print(f"Notice: Could not load from '{model_path_or_name}' ({e}), initializing base JerboaLM...")
         tokenizer = get_default_tokenizer()
         config = JerboaConfig(
             vocab_size=len(tokenizer),
@@ -203,9 +203,9 @@ def run_sft(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Supervised Fine-Tuning (SFT)")
-    default_base = "checkpoints/pretrain/model" if os.path.exists("checkpoints/pretrain/model") else None
+    default_base = "checkpoints/pretrain/model" if os.path.exists("checkpoints/pretrain/model") else "ztor2/jerboa"
     default_data = "data/sft/sample.json" if os.path.exists("data/sft/sample.json") else None
-    parser.add_argument("--model", type=str, default=default_base, help="Base model path")
+    parser.add_argument("--model", type=str, default=default_base, help="Base model path or HF repo id (default: ztor2/jerboa)")
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")

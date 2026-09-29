@@ -36,18 +36,20 @@ def quantize_model(
     print(f"       JERBOA MODEL QUANTIZATION & PRECISION CONVERSION ({precision.upper()})")
     print("=" * 70)
 
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"Model checkpoint not found at '{model_path}'")
-
     if output_dir is None:
-        output_dir = f"{model_path.rstrip('/')}_{precision}"
+        safe_name = model_path.replace("/", "_").rstrip("_")
+        output_dir = f"{safe_name}_{precision}"
 
     os.makedirs(output_dir, exist_ok=True)
-    tokenizer = get_default_tokenizer(model_path)
 
     # 1. Load source model in CPU first
-    print(f"\n[1] Loading source model from '{model_path}'...")
-    orig_model = JerboaForCausalLM.from_pretrained(model_path)
+    try:
+        print(f"\n[1] Loading source model from '{model_path}' (local or Hugging Face Hub)...")
+        orig_model = JerboaForCausalLM.from_pretrained(model_path)
+        tokenizer = get_default_tokenizer(model_path)
+    except Exception as e:
+        raise FileNotFoundError(f"Could not load model checkpoint from '{model_path}': {e}")
+
     orig_size_mb = get_model_size_mb(orig_model)
     print(f"Original model parameter size: {orig_size_mb:.2f} MB")
 
@@ -120,7 +122,8 @@ def quantize_model(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="JerboaLM Optional Model Quantization")
-    parser.add_argument("--model", type=str, default="checkpoints/sft/model", help="Source checkpoint directory")
+    default_model = "checkpoints/sft/model" if os.path.exists("checkpoints/sft/model") else "ztor2/jerboa"
+    parser.add_argument("--model", type=str, default=default_model, help="Source checkpoint directory or HF Hub repo id (default: ztor2/jerboa)")
     parser.add_argument("--output", type=str, default=None, help="Output directory for quantized model")
     parser.add_argument(
         "--precision",

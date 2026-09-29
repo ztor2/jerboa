@@ -18,13 +18,13 @@ from model import JerboaConfig, JerboaForCausalLM, get_default_tokenizer
 
 
 def load_model_and_tokenizer(model_path: str, device: torch.device):
-    tokenizer = get_default_tokenizer(model_path if os.path.exists(model_path) else None)
-
-    if os.path.exists(model_path):
-        print(f"Loading checkpoint from '{model_path}'...")
+    try:
+        print(f"Loading checkpoint from '{model_path}' (local or Hugging Face Hub)...")
+        tokenizer = get_default_tokenizer(model_path)
         model = JerboaForCausalLM.from_pretrained(model_path)
-    else:
-        print(f"Notice: Checkpoint '{model_path}' not found, initializing base JerboaLM (138M params)...")
+    except Exception as e:
+        print(f"Notice: Could not load from '{model_path}' ({e}), initializing base JerboaLM...")
+        tokenizer = get_default_tokenizer()
         config = JerboaConfig(
             vocab_size=len(tokenizer),
             hidden_size=768,
@@ -134,7 +134,8 @@ def interactive_chat_repl(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Inference CLI")
-    parser.add_argument("--model", type=str, default="checkpoints/sft/model", help="Path to checkpoint")
+    default_model = "checkpoints/sft/model" if os.path.exists("checkpoints/sft/model") else "ztor2/jerboa"
+    parser.add_argument("--model", type=str, default=default_model, help="Path to local checkpoint or HF Hub repo id (default: ztor2/jerboa)")
     parser.add_argument("--prompt", type=str, default=None, help="Single prompt mode")
     parser.add_argument("--chat", action="store_true", help="Launch interactive multi-turn chat session")
     parser.add_argument("--max_tokens", type=int, default=100)
