@@ -4,6 +4,7 @@ Includes automatic remote-code packaging (auto_map) and model card generation.
 """
 
 import argparse
+import json
 import os
 import shutil
 import sys
@@ -82,6 +83,7 @@ def upload_checkpoint(
     private: bool = False,
     stage: str = "sft",
     include_manifests: bool = True,
+    dry_run: bool = False,
 ):
     if not os.path.exists(checkpoint_dir):
         print(f"❌ Checkpoint directory '{checkpoint_dir}' does not exist.")
@@ -104,11 +106,29 @@ def upload_checkpoint(
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     model_dir = os.path.join(project_root, "model")
 
-    for filename in ["config.py", "modeling.py"]:
+    for filename in ["__init__.py", "config.py", "modeling.py", "multimodal.py"]:
         src = os.path.join(model_dir, filename)
-        dst = os.path.join(checkpoint_dir, filename)
-        shutil.copy2(src, dst)
-        print(f"  └ Copied remote code: {filename}")
+        if os.path.exists(src):
+            dst = os.path.join(checkpoint_dir, filename)
+            shutil.copy2(src, dst)
+            print(f"  └ Copied remote code: {filename}")
+
+    # 2.5 Ensure auto_map is registered in config.json
+    config_path = os.path.join(checkpoint_dir, "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                cfg_data = json.load(f)
+            if "auto_map" not in cfg_data:
+                cfg_data["auto_map"] = {
+                    "AutoConfig": "config.JerboaConfig",
+                    "AutoModelForCausalLM": "modeling.JerboaForCausalLM",
+                }
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg_data, f, indent=2)
+                print("  └ Injected auto_map into config.json for remote code execution")
+        except Exception as e:
+            print(f"  ⚠️ Could not update config.json auto_map: {e}")
 
     # 3. Bundle data manifests if present
     if include_manifests:
@@ -133,7 +153,11 @@ def upload_checkpoint(
             f.write(card_content)
         print("  └ Generated Model Card: README.md")
 
-    # 4. Upload via HfApi
+    if dry_run:
+        print(f"\n🔍 [Dry-Run] Checkpoint files successfully prepared in '{checkpoint_dir}' (upload skipped).")
+        return
+
+    # 5. Upload via HfApi
     api = HfApi()
     print(f"\n🚀 Creating repository (if not exists): {repo_id} (private={private})")
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
@@ -154,8 +178,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="checkpoints/sft/model", help="Path to checkpoint folder")
     parser.add_argument("--repo_name", type=str, default="jerboa-sft", help="Repository name on HF Hub")
     parser.add_argument("--private", action="store_true", help="Upload as a private repository")
-    parser.add_argument("--stage", type=str, default="sft", choices=["pretrain", "sft", "dpo", "grpo"], help="Training stage")
+    parser.add_argument("--stage", type=str, default="sft", choices=["pretrain", "sft", "dpo", "grpo", "multimodal"], help="Training stage")
     parser.add_argument("--no_manifests", action="store_true", help="Do not bundle data manifests")
+    parser.add_argument("--dry_run", action="store_true", help="Prepare files without uploading to Hugging Face")
     args = parser.parse_args()
 
     upload_checkpoint(
@@ -164,4 +189,5 @@ if __name__ == "__main__":
         private=args.private,
         stage=args.stage,
         include_manifests=not args.no_manifests,
+        dry_run=args.dry_run,
     )

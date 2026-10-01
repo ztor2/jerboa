@@ -1,6 +1,11 @@
-.PHONY: help pretrain sft dpo grpo multimodal bench chat history clean
+.PHONY: help pretrain sft dpo grpo multimodal bench chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
 
 PYTHON ?= python
+STAGE ?= sft
+MODEL ?= checkpoints/$(STAGE)/model
+REPO ?= jerboa-$(STAGE)
+PRIVATE ?= 0
+DRY_RUN ?= 0
 
 help:
 	@echo "======================================================================"
@@ -14,6 +19,7 @@ help:
 	@echo "  make bench       - Run Apple Silicon (MPS) Throughput Benchmark"
 	@echo "  make chat        - Launch Interactive Text Chat REPL"
 	@echo "  make history     - View Training Provenance Ledger & Loss Curves"
+	@echo "  make upload      - Upload checkpoint to HF Hub (STAGE=pretrain|sft|dpo|grpo, default: sft)"
 	@echo "  make clean       - Remove Python cache files"
 	@echo "======================================================================"
 
@@ -44,3 +50,23 @@ history:
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
+
+upload:
+	$(PYTHON) scripts/tools/upload_hub.py \
+		--model $(MODEL) \
+		--repo_name $(REPO) \
+		--stage $(STAGE) \
+		$(if $(filter 1 true,$(PRIVATE)),--private,) \
+		$(if $(filter 1 true,$(DRY_RUN)),--dry_run,)
+
+upload-pretrain:
+	$(MAKE) upload STAGE=pretrain
+
+upload-sft:
+	$(MAKE) upload STAGE=sft
+
+upload-dpo:
+	$(MAKE) upload STAGE=dpo
+
+upload-grpo:
+	$(MAKE) upload STAGE=grpo

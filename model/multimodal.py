@@ -16,8 +16,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .config import JerboaConfig
-from .modeling import JerboaForCausalLM, JerboaRMSNorm
+try:
+    from .config import JerboaConfig
+    from .modeling import JerboaForCausalLM, JerboaRMSNorm
+except (ImportError, ValueError):
+    from config import JerboaConfig
+    from modeling import JerboaForCausalLM, JerboaRMSNorm
 
 
 class VisionPatchEmbed(nn.Module):

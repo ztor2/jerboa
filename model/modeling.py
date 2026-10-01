@@ -27,7 +27,10 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 
-from .config import JerboaConfig
+try:
+    from .config import JerboaConfig
+except (ImportError, ValueError):
+    from config import JerboaConfig
 
 logger = logging.get_logger(__name__)
 
