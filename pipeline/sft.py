@@ -190,6 +190,28 @@ def run_sft(
     if data_path and os.path.exists(data_path):
         with open(data_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
+    elif data_path:
+        # Load from Hugging Face Hub (streaming or standard split)
+        try:
+            from datasets import load_dataset
+            print(f"Loading SFT dataset from Hugging Face Hub: '{data_path}'...")
+            hf_ds = load_dataset(data_path, split="train")
+            raw_data = []
+            for item in hf_ds:
+                if "conversations" in item:
+                    raw_data.append(item)
+                elif "messages" in item:
+                    convs = [{"from": "human" if m.get("role") == "user" else "gpt", "value": m.get("content", "")} for m in item["messages"]]
+                    raw_data.append({"conversations": convs})
+                elif "instruction" in item and "output" in item:
+                    user_val = item["instruction"] + (f"\n{item['input']}" if item.get("input") else "")
+                    raw_data.append({"conversations": [
+                        {"from": "human", "value": user_val},
+                        {"from": "gpt", "value": item["output"]},
+                    ]})
+        except Exception as e:
+            print(f"Could not load '{data_path}' from Hugging Face Hub: {e}. Falling back to default.")
+            raw_data = DEFAULT_SFT_EXAMPLES * 8
     else:
         print("Using built-in multi-turn conversation dataset...")
         raw_data = DEFAULT_SFT_EXAMPLES * 8  # Repeat for multiple training batches

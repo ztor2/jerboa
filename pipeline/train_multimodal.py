@@ -24,34 +24,44 @@ from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
 
 
-def load_image_tensor(image_path: str) -> torch.Tensor:
-    """Load image from path, resize to 224x224, and convert to [3, 224, 224] normalized tensor."""
-    if image_path and os.path.exists(image_path):
+def load_image_tensor(image_input) -> torch.Tensor:
+    """Load image from PIL Image or file path, resize to 224x224, and convert to [3, 224, 224] tensor."""
+    if image_input is not None:
         try:
-            img = Image.open(image_path).convert("RGB").resize((224, 224))
-            arr = torch.tensor(list(img.getdata()), dtype=torch.float32).reshape(224, 224, 3).permute(2, 0, 1) / 255.0
-            return (arr - 0.5) / 0.5
+            if isinstance(image_input, Image.Image):
+                img = image_input.convert("RGB").resize((224, 224))
+            elif isinstance(image_input, str) and os.path.exists(image_input):
+                img = Image.open(image_input).convert("RGB").resize((224, 224))
+            else:
+                img = None
+
+            if img is not None:
+                arr = torch.tensor(list(img.getdata()), dtype=torch.float32).reshape(224, 224, 3).permute(2, 0, 1) / 255.0
+                return (arr - 0.5) / 0.5
         except Exception:
             pass
     return torch.zeros(3, 224, 224)
 
 
-def load_audio_tensor(audio_path: str) -> torch.Tensor:
+def load_audio_tensor(audio_input) -> torch.Tensor:
     """Load audio or generate [80, 200] mel-spectrogram feature tensor."""
-    if audio_path and os.path.exists(audio_path):
+    if audio_input is not None:
         try:
-            import wave
-            with wave.open(audio_path, "r") as wf:
-                n_frames = wf.getnframes()
-                _ = wf.readframes(n_frames)
-                return torch.zeros(80, 200)
+            if isinstance(audio_input, str) and os.path.exists(audio_input):
+                import wave
+                with wave.open(audio_input, "r") as wf:
+                    n_frames = wf.getnframes()
+                    _ = wf.readframes(n_frames)
+            elif isinstance(audio_input, dict) and "array" in audio_input:
+                pass
+            return torch.zeros(80, 200)
         except Exception:
             pass
     return torch.zeros(80, 200)
 
 
 class MultimodalDataset(Dataset):
-    """General-purpose dataset reading multimodal conversations and media inputs from JSON."""
+    """General-purpose dataset reading multimodal conversations from local JSON or Hugging Face Hub."""
 
     def __init__(
         self,
@@ -60,6 +70,7 @@ class MultimodalDataset(Dataset):
         num_img_tokens: int = 49,
         num_audio_tokens: int = 50,
         max_length: int = 512,
+        max_samples: Optional[int] = None,
     ):
         self.tokenizer = tokenizer
         self.num_img_tokens = num_img_tokens
@@ -67,11 +78,22 @@ class MultimodalDataset(Dataset):
         self.max_length = max_length
         self.samples = []
 
-        if not os.path.exists(data_path):
-            raise FileNotFoundError(f"Multimodal dataset file not found: {data_path}")
-
-        with open(data_path, "r", encoding="utf-8") as f:
-            raw_data = json.load(f)
+        if os.path.exists(data_path):
+            with open(data_path, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+        else:
+            # Load from Hugging Face Hub (streaming or downloaded)
+            try:
+                from datasets import load_dataset
+                print(f"Loading multimodal dataset from Hugging Face Hub: '{data_path}'...")
+                hf_ds = load_dataset(data_path, split="train")
+                raw_data = []
+                for idx, item in enumerate(hf_ds):
+                    if max_samples and idx >= max_samples:
+                        break
+                    raw_data.append(item)
+            except Exception as e:
+                raise FileNotFoundError(f"Failed to load dataset from local path or Hugging Face Hub ('{data_path}'): {e}")
 
         img_id = tokenizer.convert_tokens_to_ids("<|image|>")
         aud_id = tokenizer.convert_tokens_to_ids("<|audio|>")

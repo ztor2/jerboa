@@ -2,9 +2,9 @@
 
 <img src="assets/jerboa_avatar.png" width="160" height="160" alt="JerboaLM Avatar" style="border-radius: 50%; box-shadow: 0 4px 16px rgba(0,0,0,0.15);" />
 
-# JerboaLM
+# Jerboa
 
-**Lightweight Multimodal Language Model** 
+**Lightweight Multimodal Language Model**  (in development)
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.14_MPS-orange.svg)
