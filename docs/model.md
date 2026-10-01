@@ -76,4 +76,8 @@ Fully registered tokens to prevent sub-word fragmentation:
 
 ---
 
-See [`docs/architecture.html`](file:///Users/jc/jerboa/docs/architecture.html) for the visual architecture diagram.
+## 5. Architecture Schematic
+
+![Jerboa Architecture](architecture.png)
+
+*Interactive version available at [`docs/architecture.html`](file:///Users/jc/jerboa/docs/architecture.html).*
