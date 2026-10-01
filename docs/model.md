@@ -69,13 +69,6 @@ Fully registered tokens to prevent sub-word fragmentation:
 
 ## 4. Multimodal Extension (`JerboaVL`)
 
-```mermaid
-flowchart LR
-    IMG["Image (224x224)"] --> VIT["ViT (Patch 16)"] --> M2["2x2 Spatial Merge<br/>(196 -> 49 tokens)"] --> PROJ_V["Vision Projector"] --> LLM["Jerboa Backbone"]
-    AUD["Audio (Log-Mel)"] --> CONV["1D Conv + Enc"] --> PROJ_A["Audio Projector"] --> LLM
-    TXT["Text Prompt"] --> EMB["Word Embedding"] --> LLM
-```
-
 - **Vision**: ViT encoder with $2\times 2$ spatial pooling compressing 196 patches into **49 tokens**, minimizing multimodal prefill latency.
 - **Audio**: 80-channel log-Mel spectrogram encoder with 1D convolution downsampling.
 - **Alignment**: 2-layer MLP projectors align visual and acoustic feature representations into LLM token embedding space.
