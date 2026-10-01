@@ -26,54 +26,41 @@ tags:
 pipeline_tag: text-generation
 ---
 
-# {repo_id}
+# Jerboa
 
-**JerboaLM** is an ultra-lightweight language model (~{num_params_m:.1f}M parameters) optimized for Apple Silicon (MPS / Metal) and edge deployments.
+**Lightweight Language & Multimodal Model** (in active development)
 
-- **Stage**: {stage.upper()}
-- **Parameters**: ~{num_params_m:.1f}M
-- **Context Length**: 4,096 tokens (extensible to 16K via YaRN)
-- **Attention**: Grouped-Query Attention (GQA 3:1) + Interleaved Sliding Window Attention (SWA)
-- **Multi-Token Prediction**: Enabled (MTP $t+2$ auxiliary head)
-- **Special Tokens**: Native support for `<think>`, `</think>`, `<answer>`, `<tool_call>`, `<|im_start|>`, `<|im_end|>`
+Jerboa is an ultra-lightweight language and multimodal model (~138M–146M parameters) optimized for Apple Silicon (MPS / Metal) and edge deployments.
+
+---
+
+## Model Specifications
+
+| Attribute | Specification |
+| :--- | :--- |
+| **Language Backbone** | `JerboaForCausalLM` (~138.4M base / ~145.9M with MTP) |
+| **Multimodal Model** | `JerboaVLForConditionalGeneration` (~145.2M) |
+| **Layers & Hidden Dim** | 16 Layers, $d_{{model}}=768$, $d_{{ffn}}=2048$ (SwiGLU) |
+| **Attention** | GQA (12 Query : 4 KV heads), QK-Norm, Interleaved SWA |
+| **Context Length** | 4,096 tokens (extensible to 16K via YaRN) |
+| **Hardware Target** | Apple Silicon (MPS / Metal) & Edge Devices |
 
 ---
 
 ## Quickstart
 
 ```python
-import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-repo_id = "{repo_id}"
+model_id = "{repo_id}"
+tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
 
-tokenizer = AutoTokenizer.from_pretrained(repo_id, trust_remote_code=True)
-model = AutoModelForCausalLM.from_pretrained(
-    repo_id,
-    torch_dtype=torch.float32,
-    device_map="auto",
-    trust_remote_code=True
-)
-
-prompt = "<|im_start|>user\\nExplain grouped-query attention.<|im_end|>\\n<|im_start|>assistant\\n"
+prompt = "Hello, what are you?"
 inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-
-outputs = model.generate(**inputs, max_new_tokens=128, temperature=0.7)
-print(tokenizer.decode(outputs[0], skip_special_tokens=False))
+outputs = model.generate(**inputs, max_new_tokens=128)
+print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ```
-
----
-
-## Architecture Specifications
-
-| Attribute | Specification |
-| :--- | :--- |
-| **Hidden Dim** | 768 |
-| **FFN Intermediate Dim** | 2048 (SwiGLU) |
-| **Layers** | 16 |
-| **Heads** | 12 Query / 4 KV (GQA) |
-| **Vocabulary Size** | 49,164 tokens |
-| **Target Hardware** | Apple Silicon MPS / Edge Devices |
 """
 
 
@@ -145,13 +132,12 @@ def upload_checkpoint(
                     shutil.copytree(s, d, dirs_exist_ok=True)
             print(f"  └ Bundled data provenance manifests from 'data/manifests'")
 
-    # 4. Create Model Card README.md if not present
+    # 4. Generate clean Model Card README.md
     readme_path = os.path.join(checkpoint_dir, "README.md")
-    if not os.path.exists(readme_path):
-        card_content = generate_model_card(repo_id, stage, 145.9)
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(card_content)
-        print("  └ Generated Model Card: README.md")
+    card_content = generate_model_card(repo_id, stage, 145.9)
+    with open(readme_path, "w", encoding="utf-8") as f:
+        f.write(card_content)
+    print("  └ Generated Model Card: README.md")
 
     if dry_run:
         print(f"\n🔍 [Dry-Run] Checkpoint files successfully prepared in '{checkpoint_dir}' (upload skipped).")

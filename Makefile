@@ -3,7 +3,7 @@
 PYTHON ?= python
 STAGE ?= sft
 MODEL ?= checkpoints/$(STAGE)/model
-REPO ?= jerboa-$(STAGE)
+REPO ?= jerboa
 PRIVATE ?= 0
 DRY_RUN ?= 0
 
