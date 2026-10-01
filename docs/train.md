@@ -112,16 +112,26 @@ python pipeline/sft.py --model checkpoints/pretrain/model --data data/sft/sample
 ### ③ Direct Preference Optimization (`pipeline/rl_dpo.py`)
 - Implicit policy optimization with frozen reference model ($\pi_{ref}$):
   $$\mathcal{L}_{DPO}(\pi_\theta; \pi_{ref}) = -\mathbb{E}\left[\log \sigma\left(\beta \log \frac{\pi_\theta(y_w|x)}{\pi_{ref}(y_w|x)} - \beta \log \frac{\pi_\theta(y_l|x)}{\pi_{ref}(y_l|x)}\right)\right]$$
+- Supports both text DPO and **Multimodal DPO** (anti-hallucination alignment via `--multimodal`).
 
 ```bash
+# Text DPO
 python pipeline/rl_dpo.py --model checkpoints/sft/model --data data/dpo/sample.json --steps 30 --beta 0.1
+
+# Multimodal DPO (anti-hallucination)
+python pipeline/rl_dpo.py --multimodal --steps 30 --beta 0.1
 ```
 
 ### ④ Group Relative Policy Optimization (`pipeline/rl_grpo.py`)
 - DeepSeek-R1 style online reasoning alignment. Samples $G$ candidate outputs per prompt, scores via programmatic rule-based rewards, and computes group relative advantages without a Critic model.
+- Supports both text reasoning and **Multimodal GRPO** (visual reasoning on geometry, charts, figures via `--multimodal`).
 
 ```bash
+# Text GRPO reasoning
 python pipeline/rl_grpo.py --model checkpoints/sft/model --data data/grpo/sample.json --steps 20 --group_size 4
+
+# Multimodal GRPO visual reasoning
+python pipeline/rl_grpo.py --multimodal --steps 20 --group_size 4
 ```
 
 ### ⑤ Multimodal Alignment (`pipeline/train_multimodal.py`)

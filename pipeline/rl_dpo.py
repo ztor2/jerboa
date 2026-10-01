@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
+from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
 
 DEFAULT_DPO_PAIRS = [
@@ -39,10 +40,36 @@ DEFAULT_DPO_PAIRS = [
     },
 ]
 
+DEFAULT_MULTIMODAL_DPO_PAIRS = [
+    {
+        "prompt": "<|im_start|>user\n<|image|>\nDescribe the scenic environment in this photograph.<|im_end|>\n<|im_start|>assistant\n",
+        "chosen": "The image shows a calm alpine lake reflecting snow-capped peaks under a soft morning sunrise.<|im_end|>",
+        "rejected": "The image shows an underground subway station filled with commuters and neon billboards.<|im_end|>",
+    },
+    {
+        "prompt": "<|im_start|>user\n<|image|>\nAre there any modes of transportation present?<|im_end|>\n<|im_start|>assistant\n",
+        "chosen": "Yes, there is an electric passenger train traveling across a bridge in the middle ground.<|im_end|>",
+        "rejected": "No, there are no vehicles or structures present anywhere in this wilderness photo.<|im_end|>",
+    },
+]
 
-def compute_log_probs(model: torch.nn.Module, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+
+def compute_log_probs(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    labels: torch.Tensor,
+    pixel_values: Optional[torch.Tensor] = None,
+    audio_values: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
     """Compute per-token log-probabilities for the response tokens (where labels != -100)."""
-    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+    kwargs = {}
+    if pixel_values is not None:
+        kwargs["pixel_values"] = pixel_values
+    if audio_values is not None:
+        kwargs["audio_values"] = audio_values
+
+    outputs = model(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
     logits = outputs.logits  # [B, seq_len, vocab_size]
 
     # Shift logits and labels for next-token prediction
@@ -61,17 +88,28 @@ def compute_log_probs(model: torch.nn.Module, input_ids: torch.Tensor, attention
 class DPODataset(Dataset):
     """Dataset producing chosen and rejected token tensors with prompt masking."""
 
-    def __init__(self, data: List[Dict], tokenizer, max_length: int = 256):
+    def __init__(self, data: List[Dict], tokenizer, max_length: int = 256, is_multimodal: bool = False):
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.is_multimodal = is_multimodal
         self.pairs = []
+
+        img_id = tokenizer.convert_tokens_to_ids("<|image|>")
+        img_tokens = [img_id] * 49 if is_multimodal and img_id is not None else []
 
         for item in data:
             prompt = item["prompt"]
             chosen = item["chosen"]
             rejected = item["rejected"]
 
-            p_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+            if is_multimodal and "<|image|>" not in prompt:
+                p_tokens = tokenizer.encode("<|im_start|>user\n", add_special_tokens=False) + img_tokens + tokenizer.encode(f"{prompt}<|im_end|>\n<|im_start|>assistant\n", add_special_tokens=False)
+            elif is_multimodal and "<|image|>" in prompt:
+                parts = prompt.split("<|image|>")
+                p_tokens = tokenizer.encode(parts[0], add_special_tokens=False) + img_tokens + tokenizer.encode(parts[1], add_special_tokens=False)
+            else:
+                p_tokens = tokenizer.encode(prompt, add_special_tokens=False)
+
             c_tokens = tokenizer.encode(chosen, add_special_tokens=False)
             r_tokens = tokenizer.encode(rejected, add_special_tokens=False)
 
@@ -94,14 +132,18 @@ class DPODataset(Dataset):
             c_ids, c_mask, c_labels = prepare_seq(c_tokens)
             r_ids, r_mask, r_labels = prepare_seq(r_tokens)
 
-            self.pairs.append({
+            pair_dict = {
                 "chosen_ids": c_ids,
                 "chosen_mask": c_mask,
                 "chosen_labels": c_labels,
                 "rejected_ids": r_ids,
                 "rejected_mask": r_mask,
                 "rejected_labels": r_labels,
-            })
+            }
+            if is_multimodal:
+                pair_dict["pixel_values"] = torch.randn(3, 224, 224)
+
+            self.pairs.append(pair_dict)
 
     def __len__(self):
         return len(self.pairs)
@@ -118,30 +160,56 @@ def run_dpo(
     steps: int = 30,
     batch_size: int = 2,
     lr: float = 5e-6,
+    multimodal: bool = False,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'})")
+    print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'}) | Multimodal: {multimodal}")
 
     tokenizer = get_default_tokenizer(model_path if model_path and os.path.exists(model_path) else None)
 
     # 1. Initialize Policy Model
-    if model_path and os.path.exists(model_path):
-        print(f"Loading policy model from {model_path}...")
-        policy_model = JerboaForCausalLM.from_pretrained(model_path)
+    config = JerboaConfig(
+        vocab_size=len(tokenizer),
+        hidden_size=768,
+        intermediate_size=2048,
+        num_hidden_layers=16,
+        num_attention_heads=12,
+        num_key_value_heads=4,
+        tie_word_embeddings=True,
+        qk_norm=True,
+    )
+
+    if multimodal:
+        print("Initializing Jerboa-VL model for Multimodal DPO (anti-hallucination alignment)...")
+        policy_model = JerboaVLForConditionalGeneration(config)
+        if model_path and os.path.exists(model_path):
+            state_dict = None
+            if os.path.isdir(model_path):
+                st_file = os.path.join(model_path, "model.safetensors")
+                pt_file = os.path.join(model_path, "model.pt")
+                if os.path.exists(st_file):
+                    from safetensors.torch import load_file
+                    state_dict = load_file(st_file)
+                elif os.path.exists(pt_file):
+                    state_dict = torch.load(pt_file, map_location=device, weights_only=True)
+            elif os.path.isfile(model_path):
+                state_dict = torch.load(model_path, map_location=device, weights_only=True)
+
+            if state_dict is not None:
+                if not any(k.startswith("vision_") or k.startswith("audio_") or k.startswith("language_model.") for k in state_dict.keys()):
+                    print(f"Loading text base weights into multimodal language backbone from '{model_path}'...")
+                    policy_model.language_model.load_state_dict(state_dict, strict=False)
+                else:
+                    print(f"Loading multimodal weights from '{model_path}'...")
+                    policy_model.load_state_dict(state_dict, strict=False)
     else:
-        print("Initializing Jerboa model for DPO alignment demonstration...")
-        config = JerboaConfig(
-            vocab_size=len(tokenizer),
-            hidden_size=768,
-            intermediate_size=2048,
-            num_hidden_layers=16,
-            num_attention_heads=12,
-            num_key_value_heads=4,
-            tie_word_embeddings=True,
-            qk_norm=True,
-        )
-        policy_model = JerboaForCausalLM(config)
+        if model_path and os.path.exists(model_path):
+            print(f"Loading policy model from {model_path}...")
+            policy_model = JerboaForCausalLM.from_pretrained(model_path)
+        else:
+            print("Initializing Jerboa model for DPO alignment demonstration...")
+            policy_model = JerboaForCausalLM(config)
 
     policy_model.to(device)
 
@@ -161,15 +229,16 @@ def run_dpo(
         print(f"Loaded {len(pairs)} preference pairs from '{data_path}'")
         pairs = pairs * max(1, (steps * batch_size // len(pairs)) + 1)
     else:
-        pairs = DEFAULT_DPO_PAIRS * 10
+        pairs = (DEFAULT_MULTIMODAL_DPO_PAIRS if multimodal else DEFAULT_DPO_PAIRS) * 10
 
-    dataset = DPODataset(pairs, tokenizer)
+    dataset = DPODataset(pairs, tokenizer, is_multimodal=multimodal)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr)
 
     # 4. DPO Training Loop
-    print(f"\n--- Starting Direct Preference Optimization (DPO, Beta={beta}, Steps={steps}) ---")
+    stage_desc = "Multimodal DPO (Anti-Hallucination)" if multimodal else "DPO"
+    print(f"\n--- Starting {stage_desc} (Beta={beta}, Steps={steps}) ---")
     policy_model.train()
     step = 0
     start_time = time.time()
@@ -190,14 +259,16 @@ def run_dpo(
         r_mask = batch["rejected_mask"].to(device)
         r_lbls = batch["rejected_labels"].to(device)
 
+        pixel_values = batch["pixel_values"].to(device) if multimodal and "pixel_values" in batch else None
+
         # Policy logprobs
-        pi_chosen_logps = compute_log_probs(policy_model, c_ids, c_mask, c_lbls)
-        pi_rejected_logps = compute_log_probs(policy_model, r_ids, r_mask, r_lbls)
+        pi_chosen_logps = compute_log_probs(policy_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
+        pi_rejected_logps = compute_log_probs(policy_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
 
         # Reference logprobs
         with torch.no_grad():
-            ref_chosen_logps = compute_log_probs(ref_model, c_ids, c_mask, c_lbls)
-            ref_rejected_logps = compute_log_probs(ref_model, r_ids, r_mask, r_lbls)
+            ref_chosen_logps = compute_log_probs(ref_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
+            ref_rejected_logps = compute_log_probs(ref_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
 
         # DPO Bradley-Terry Loss: -log(sigmoid(beta * (pi_diff - ref_diff)))
         pi_diff = pi_chosen_logps - pi_rejected_logps
@@ -226,9 +297,14 @@ def run_dpo(
 
     # 5. Save Final DPO Model
     final_path = os.path.join(output_dir, "model")
-    policy_model.save_pretrained(final_path)
-    tokenizer.save_pretrained(final_path)
-    print(f"\nDPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
+    os.makedirs(final_path, exist_ok=True)
+    if multimodal:
+        torch.save(policy_model.state_dict(), os.path.join(final_path, "multimodal_dpo.pt"))
+        print(f"\nMultimodal DPO alignment finished in {time.time() - start_time:.2f}s! Saved weights to {final_path}/multimodal_dpo.pt")
+    else:
+        policy_model.save_pretrained(final_path)
+        tokenizer.save_pretrained(final_path)
+        print(f"\nDPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
     return final_path
 
 
@@ -239,9 +315,11 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default=default_sft, help="SFT model path")
     parser.add_argument("--data", type=str, default=default_data, help="JSON preference pairs path")
     parser.add_argument("--steps", type=int, default=25, help="Number of DPO steps")
+    parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--beta", type=float, default=0.1, help="DPO Beta parameter")
     parser.add_argument("--lr", type=float, default=5e-6, help="Learning rate")
     parser.add_argument("--output_dir", type=str, default="checkpoints/dpo")
+    parser.add_argument("--multimodal", action="store_true", help="Enable Multimodal DPO (anti-hallucination)")
     args = parser.parse_args()
 
     run_dpo(
@@ -250,5 +328,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         beta=args.beta,
         steps=args.steps,
+        batch_size=args.batch_size,
         lr=args.lr,
+        multimodal=args.multimodal,
     )
