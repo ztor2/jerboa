@@ -17,8 +17,8 @@ class JerboaConfig(PretrainedConfig):
     model_type = "jerboa"
     keys_to_ignore_at_inference = ["past_key_values"]
     auto_map = {
-        "AutoConfig": "configuration_jerboa.JerboaConfig",
-        "AutoModelForCausalLM": "modeling_jerboa.JerboaForCausalLM",
+        "AutoConfig": "config.JerboaConfig",
+        "AutoModelForCausalLM": "modeling.JerboaForCausalLM",
     }
 
     def __init__(
@@ -90,7 +90,3 @@ class JerboaConfig(PretrainedConfig):
             tie_word_embeddings=tie_word_embeddings,
             **kwargs,
         )
-
-
-# Backward compatibility alias
-OctopusConfig = JerboaConfig

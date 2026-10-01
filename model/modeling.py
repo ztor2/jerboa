@@ -27,7 +27,7 @@ from transformers.modeling_outputs import (
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import logging
 
-from .configuration_jerboa import JerboaConfig
+from .config import JerboaConfig
 
 logger = logging.get_logger(__name__)
 
@@ -659,14 +659,3 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
             "attention_mask": attention_mask,
         }
         return model_inputs
-
-
-# Backward compatibility aliases
-OctopusRMSNorm = JerboaRMSNorm
-OctopusRotaryEmbedding = JerboaRotaryEmbedding
-OctopusAttention = JerboaAttention
-OctopusMLP = JerboaMLP
-OctopusDecoderLayer = JerboaDecoderLayer
-OctopusPreTrainedModel = JerboaPreTrainedModel
-OctopusModel = JerboaModel
-OctopusForCausalLM = JerboaForCausalLM

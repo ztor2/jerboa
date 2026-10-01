@@ -10,9 +10,9 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.configuration_jerboa import JerboaConfig
-from model.modeling_jerboa import JerboaForCausalLM
-from model.modeling_multimodal import JerboaVLForConditionalGeneration
+from model.config import JerboaConfig
+from model.modeling import JerboaForCausalLM
+from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
 
 

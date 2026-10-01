@@ -31,8 +31,8 @@ except ImportError:
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from model.configuration_jerboa import JerboaConfig
-from model.modeling_jerboa import JerboaForCausalLM
+from model.config import JerboaConfig
+from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
 
 DEFAULT_SFT_EXAMPLES = [

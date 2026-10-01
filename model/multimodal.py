@@ -16,8 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from .configuration_jerboa import JerboaConfig, OctopusConfig
-from .modeling_jerboa import JerboaForCausalLM, JerboaRMSNorm, OctopusForCausalLM, OctopusRMSNorm
+from .config import JerboaConfig
+from .modeling import JerboaForCausalLM, JerboaRMSNorm
 
 
 class VisionPatchEmbed(nn.Module):
@@ -315,7 +315,3 @@ class JerboaVLForConditionalGeneration(nn.Module):
                 break
 
         return torch.cat([input_ids] + generated, dim=-1)
-
-
-# Backward compatibility alias
-OctopusVLForConditionalGeneration = JerboaVLForConditionalGeneration

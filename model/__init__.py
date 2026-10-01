@@ -1,30 +1,25 @@
 """Jerboa Model Package."""
 
-from .configuration_jerboa import JerboaConfig, OctopusConfig
-from .modeling_jerboa import (
+from .config import JerboaConfig
+from .modeling import (
+    JerboaAttention,
+    JerboaDecoderLayer,
     JerboaForCausalLM,
+    JerboaMLP,
     JerboaModel,
     JerboaPreTrainedModel,
     JerboaRMSNorm,
-    JerboaAttention,
-    JerboaMLP,
-    JerboaDecoderLayer,
-    OctopusForCausalLM,
-    OctopusModel,
-    OctopusPreTrainedModel,
 )
-from .modeling_multimodal import (
-    JerboaVLForConditionalGeneration,
-    OctopusVLForConditionalGeneration,
-    LightweightVisionEncoder,
-    LightweightAudioEncoder,
-    VisionProjector,
+from .multimodal import (
     AudioProjector,
+    JerboaVLForConditionalGeneration,
+    LightweightAudioEncoder,
+    LightweightVisionEncoder,
+    VisionProjector,
 )
 from .tokenizer import build_bpe_tokenizer, get_default_tokenizer
 
 __all__ = [
-    # Jerboa Architecture
     "JerboaConfig",
     "JerboaPreTrainedModel",
     "JerboaModel",
@@ -34,13 +29,6 @@ __all__ = [
     "JerboaMLP",
     "JerboaDecoderLayer",
     "JerboaVLForConditionalGeneration",
-    # Backward compatibility
-    "OctopusConfig",
-    "OctopusPreTrainedModel",
-    "OctopusModel",
-    "OctopusForCausalLM",
-    "OctopusVLForConditionalGeneration",
-    # Components & Utilities
     "LightweightVisionEncoder",
     "LightweightAudioEncoder",
     "VisionProjector",

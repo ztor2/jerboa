@@ -103,7 +103,7 @@ def upload_checkpoint(
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     model_dir = os.path.join(project_root, "model")
 
-    for filename in ["configuration_jerboa.py", "modeling_jerboa.py"]:
+    for filename in ["config.py", "modeling.py"]:
         src = os.path.join(model_dir, filename)
         dst = os.path.join(checkpoint_dir, filename)
         shutil.copy2(src, dst)

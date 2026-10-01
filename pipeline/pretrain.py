@@ -41,8 +41,8 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
-from model.configuration_jerboa import JerboaConfig
-from model.modeling_jerboa import JerboaForCausalLM
+from model.config import JerboaConfig
+from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
 
 MANIFEST_DIR = "data/manifests"

@@ -8,8 +8,8 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from model.configuration_jerboa import JerboaConfig
-from model.modeling_jerboa import JerboaForCausalLM
+from model.config import JerboaConfig
+from model.modeling import JerboaForCausalLM
 
 
 def benchmark(batch_size: int = 1, prompt_len: int = 128, gen_len: int = 64, num_layers: int = 16):
