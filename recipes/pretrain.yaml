@@ -1,0 +1,13 @@
+# Pre-training Recipe (Rolling-Buffer on Apple Silicon / MPS)
+mode: stream
+source: fineweb-edu
+min_score: 3
+chunks: 5
+docs_per_chunk: 500
+steps_per_chunk: 15
+batch_size: 4
+seq_len: 256
+lr: 3.0e-4
+resume: auto
+wandb: false
+wandb_run: exp-pretrain

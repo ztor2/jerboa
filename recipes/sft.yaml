@@ -1,0 +1,11 @@
+# Supervised Fine-Tuning (SFT) Recipe with ChatML Response Masking
+model: checkpoints/pretrain/model
+data: data/sft/sample.json
+output_dir: checkpoints/sft
+epochs: 2
+batch_size: 2
+lr: 2.0e-4
+max_length: 512
+wandb: false
+wandb_project: jerboa
+wandb_run: exp-sft

@@ -302,7 +302,10 @@ def run_multimodal_training(
 
 
 if __name__ == "__main__":
+    from pipeline.recipe import apply_recipe
+
     parser = argparse.ArgumentParser(description="Jerboa Multimodal Training")
+    parser.add_argument("--recipe", type=str, default="recipes/multimodal.yaml", help="Path to YAML training recipe")
     parser.add_argument("--stage", type=int, default=1, choices=[1, 2], help="Stage 1 (projector) or Stage 2 (full)")
     parser.add_argument("--modality", type=str, default="unified", choices=["unified", "vision", "audio"], help="Target modality")
     parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
@@ -311,6 +314,7 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=str, default=None, help="Path to multimodal JSON dataset")
     parser.add_argument("--output_dir", type=str, default="checkpoints/multimodal")
     args = parser.parse_args()
+    args = apply_recipe(args, "recipes/multimodal.yaml")
 
     run_multimodal_training(
         stage=args.stage,

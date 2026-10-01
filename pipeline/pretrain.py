@@ -36,7 +36,11 @@ except ImportError:
     WANDB_AVAILABLE = False
 
 import torch
-from datasets import load_dataset
+
+try:
+    from datasets import load_dataset
+except ImportError:
+    load_dataset = None
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup
@@ -593,7 +597,10 @@ def run_pretrain(
 
 
 if __name__ == "__main__":
+    from pipeline.recipe import apply_recipe
+
     parser = argparse.ArgumentParser(description="JerboaLM Unified Pre-training")
+    parser.add_argument("--recipe", type=str, default="recipes/pretrain.yaml", help="Path to YAML training recipe")
     parser.add_argument("--mode", type=str, default="rolling", choices=["rolling", "stream", "file"], help="Pre-training mode (default: rolling)")
     parser.add_argument("--chunks", type=int, default=3, help="Number of chunks for rolling mode")
     parser.add_argument("--docs_per_chunk", type=int, default=500, help="Documents per chunk")
@@ -611,6 +618,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
+    args = apply_recipe(args, "recipes/pretrain.yaml")
 
     run_pretrain(
         mode=args.mode,

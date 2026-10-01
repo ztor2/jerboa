@@ -68,7 +68,25 @@ python scripts/data/prepare.py --stage all
 
 ---
 
-## 3. Training Pipelines
+## 3. Training Pipelines & Recipes
+
+All training pipelines support **YAML recipes** (`recipes/*.yaml`) so hyperparameters can be maintained in configuration files rather than typed as long CLI flags:
+
+| Shortcut | Pipeline | Default Recipe |
+| :--- | :--- | :--- |
+| `make pretrain` | Rolling-buffer pre-training | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
+| `make sft` | Supervised fine-tuning (ChatML) | [`recipes/sft.yaml`](file:///Users/jc/jerboa/recipes/sft.yaml) |
+| `make dpo` | Direct preference optimization | [`recipes/dpo.yaml`](file:///Users/jc/jerboa/recipes/dpo.yaml) |
+| `make grpo` | Group relative policy optimization | [`recipes/grpo.yaml`](file:///Users/jc/jerboa/recipes/grpo.yaml) |
+| `make multimodal` | Multimodal projector warmup & tuning | [`recipes/multimodal.yaml`](file:///Users/jc/jerboa/recipes/multimodal.yaml) |
+| `make bench` | MPS throughput benchmark | - |
+| `make chat` | Interactive text chat REPL | - |
+
+You can also specify a custom recipe or override specific parameters on the CLI:
+```bash
+python pipeline/sft.py --recipe custom_recipe.yaml
+python pipeline/sft.py --epochs 5  # overrides recipe epochs
+```
 
 ```mermaid
 flowchart LR

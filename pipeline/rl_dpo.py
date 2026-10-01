@@ -309,9 +309,12 @@ def run_dpo(
 
 
 if __name__ == "__main__":
+    from pipeline.recipe import apply_recipe
+
     parser = argparse.ArgumentParser(description="Jerboa DPO Alignment")
     default_sft = "checkpoints/sft/model" if os.path.exists("checkpoints/sft/model") else None
     default_data = "data/dpo/sample.json" if os.path.exists("data/dpo/sample.json") else None
+    parser.add_argument("--recipe", type=str, default="recipes/dpo.yaml", help="Path to YAML training recipe")
     parser.add_argument("--model", type=str, default=default_sft, help="SFT model path")
     parser.add_argument("--data", type=str, default=default_data, help="JSON preference pairs path")
     parser.add_argument("--steps", type=int, default=25, help="Number of DPO steps")
@@ -321,6 +324,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="checkpoints/dpo")
     parser.add_argument("--multimodal", action="store_true", help="Enable Multimodal DPO (anti-hallucination)")
     args = parser.parse_args()
+    args = apply_recipe(args, "recipes/dpo.yaml")
 
     run_dpo(
         model_path=args.model,

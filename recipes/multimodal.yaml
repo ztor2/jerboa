@@ -1,0 +1,8 @@
+# Multimodal Alignment Recipe (Vision & Audio Projector Warmup or Full Tuning)
+stage: 1
+modality: unified
+data: data/multimodal/interleaved/sample.json
+output_dir: checkpoints/multimodal
+epochs: 2
+batch_size: 2
+lr: 5.0e-4

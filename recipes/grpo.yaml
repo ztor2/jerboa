@@ -1,0 +1,8 @@
+# Group Relative Policy Optimization (GRPO) Recipe for Reasoning Alignment
+model: checkpoints/sft/model
+data: data/grpo/sample.json
+output_dir: checkpoints/grpo
+steps: 10
+group_size: 4
+lr: 1.0e-5
+multimodal: false

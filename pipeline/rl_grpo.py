@@ -285,9 +285,12 @@ def run_grpo(
 
 
 if __name__ == "__main__":
+    from pipeline.recipe import apply_recipe
+
     parser = argparse.ArgumentParser(description="Jerboa GRPO Alignment")
     default_sft = "checkpoints/sft/model" if os.path.exists("checkpoints/sft/model") else None
     default_data = "data/grpo/sample.json" if os.path.exists("data/grpo/sample.json") else None
+    parser.add_argument("--recipe", type=str, default="recipes/grpo.yaml", help="Path to YAML training recipe")
     parser.add_argument("--model", type=str, default=default_sft, help="Base/SFT model path")
     parser.add_argument("--data", type=str, default=default_data, help="JSON verifiable tasks path")
     parser.add_argument("--steps", type=int, default=10, help="GRPO steps")
@@ -296,6 +299,7 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="checkpoints/grpo")
     parser.add_argument("--multimodal", action="store_true", help="Enable Multimodal GRPO (visual reasoning)")
     args = parser.parse_args()
+    args = apply_recipe(args, "recipes/grpo.yaml")
 
     run_grpo(
         model_path=args.model,

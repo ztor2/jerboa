@@ -254,9 +254,12 @@ def run_sft(
 
 
 if __name__ == "__main__":
+    from pipeline.recipe import apply_recipe
+
     parser = argparse.ArgumentParser(description="Jerboa Supervised Fine-Tuning (SFT)")
     default_base = "checkpoints/pretrain/model" if os.path.exists("checkpoints/pretrain/model") else "ztor2/jerboa"
     default_data = "data/sft/sample.json" if os.path.exists("data/sft/sample.json") else None
+    parser.add_argument("--recipe", type=str, default="recipes/sft.yaml", help="Path to YAML training recipe")
     parser.add_argument("--model", type=str, default=default_base, help="Base model path or HF repo id (default: ztor2/jerboa)")
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
@@ -267,6 +270,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
+    args = apply_recipe(args, "recipes/sft.yaml")
 
     run_sft(
         model_path_or_name=args.model,

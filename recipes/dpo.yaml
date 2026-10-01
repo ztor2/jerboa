@@ -1,0 +1,9 @@
+# Direct Preference Optimization (DPO) Recipe
+model: checkpoints/sft/model
+data: data/dpo/sample.json
+output_dir: checkpoints/dpo
+steps: 25
+batch_size: 2
+beta: 0.1
+lr: 5.0e-6
+multimodal: false
