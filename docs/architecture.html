@@ -411,8 +411,6 @@
         <span class="budget-sep">|</span>
         <span class="budget-item"><strong>16 Layers:</strong> 100.69M (72.7%) [6.29M/layer]</span>
         <span class="budget-sep">|</span>
-        <span class="budget-item"><strong>LM Head:</strong> 0M (Tied)</span>
-        <span class="budget-sep">|</span>
         <span class="budget-item"><strong>Multimodal Extra:</strong> +13.98M (Vision 11.0M+1.8M, Audio 5.5M+0.8M)</span>
       </div>
     </div>
@@ -584,7 +582,6 @@
       <div class="assembly-card">
         <div class="title-row">
           <span>Multimodal Sequence Injection &amp; Concat</span>
-          <span class="badge badge-math">Dimension Algebra</span>
         </div>
         <div class="math-expr">
           Inject $\mathbf{H}_{\text{vis}} [49]$ &amp; $\mathbf{H}_{\text{aud}} [50]$ into placeholder tokens $\longrightarrow \text{Total Length } S = 49 + 50 + S_{\text{txt}}$
