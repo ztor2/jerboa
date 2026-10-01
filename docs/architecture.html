@@ -4,6 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Jerboa &amp; JerboaVL Architecture Schematic</title>
+
+  <!-- KaTeX for academic-grade math typesetting -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+    onload="renderMathInElement(document.body, {
+      delimiters: [
+        {left: '$$', right: '$$', display: true},
+        {left: '$', right: '$', display: false}
+      ],
+      throwOnError: false
+    });">
+  </script>
+
   <style>
     * {
       box-sizing: border-box;
@@ -52,9 +66,9 @@
       background: #f1f5f9;
       border: 1px solid #e2e8f0;
       border-radius: 6px;
-      padding: 6px 14px;
-      font-size: 0.76rem;
-      color: #475569;
+      padding: 7px 16px;
+      font-size: 0.78rem;
+      color: #334155;
     }
 
     .budget-item {
@@ -76,9 +90,9 @@
       border: 1px solid #cbd5e1;
       border-radius: 6px;
       background: #ffffff;
-      padding: 8px 12px;
+      padding: 9px 12px;
       text-align: center;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       position: relative;
     }
 
@@ -113,10 +127,10 @@
 
     .badge {
       display: inline-block;
-      font-size: 0.68rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      padding: 1px 6px;
-      border-radius: 3px;
+      font-size: 0.7rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 2px 7px;
+      border-radius: 4px;
       background: #e2e8f0;
       color: #334155;
       font-weight: 600;
@@ -138,19 +152,22 @@
       border: 1px solid #e0f2fe;
     }
 
+    /* Mathematical Typography with KaTeX */
     .math-expr {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.72rem;
+      font-size: 0.84rem;
       color: #0369a1;
       margin-top: 3px;
-      line-height: 1.35;
+      line-height: 1.45;
     }
 
     .dim-label {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.71rem;
-      color: #64748b;
-      margin-top: 2px;
+      font-size: 0.78rem;
+      color: #475569;
+      margin-top: 3px;
+    }
+
+    .dim-label strong {
+      color: #0f172a;
     }
 
     /* Stream Grid */
@@ -274,7 +291,7 @@
       width: 100%;
       border: 1px solid #cbd5e1;
       border-radius: 4px;
-      padding: 7px 10px;
+      padding: 8px 10px;
       background: #ffffff;
       text-align: center;
     }
@@ -284,22 +301,22 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
       width: 100%;
-      margin: 5px 0;
+      margin: 6px 0;
     }
 
     .gqa-cell {
       border: 1px dashed #cbd5e1;
       border-radius: 4px;
-      padding: 5px 8px;
+      padding: 6px 8px;
       background: #fafafa;
       text-align: left;
     }
 
     .gqa-cell .cell-title {
       font-weight: 600;
-      font-size: 0.73rem;
+      font-size: 0.75rem;
       color: #1e293b;
-      margin-bottom: 1px;
+      margin-bottom: 2px;
     }
 
     .swiglu-branches {
@@ -307,13 +324,13 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
       width: 100%;
-      margin: 5px 0;
+      margin: 6px 0;
     }
 
     .branch-cell {
       border: 1px dashed #cbd5e1;
       border-radius: 4px;
-      padding: 5px 8px;
+      padding: 6px 8px;
       background: #fafafa;
       text-align: center;
     }
@@ -349,8 +366,8 @@
       background: #f8fafc;
       border: 1px solid #e2e8f0;
       border-radius: 4px;
-      padding: 5px 10px;
-      font-size: 0.74rem;
+      padding: 6px 10px;
+      font-size: 0.76rem;
       color: #475569;
     }
 
@@ -374,6 +391,11 @@
       grid-template-columns: 1fr 1fr;
       gap: 16px;
       width: 100%;
+    }
+
+    /* KaTeX fine-tuning */
+    .katex {
+      font-size: 1.02em;
     }
   </style>
 </head>
@@ -401,7 +423,7 @@
       <div class="column">
         <div class="card input-node vision-stream" style="width: 100%;">
           <div class="title-row"><span>Vision Input</span></div>
-          <div class="dim-label">Image [B, 3, 224, 224]</div>
+          <div class="dim-label">Image $\mathbf{X}_{\text{img}} \in \mathbb{R}^{B \times 3 \times 224 \times 224}$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -414,8 +436,8 @@
             <span>Patch Embed + ViT-6L</span>
             <span class="badge">11.02M</span>
           </div>
-          <div class="math-expr">Conv2d(3, 384, k=16, s=16) &times; 6 L</div>
-          <div class="dim-label">[B, 3, 224, 224] &rarr; [B, 196, 384]</div>
+          <div class="math-expr">$\text{Conv2d}(3, 384, k=16, s=16) \times 6\text{L}$</div>
+          <div class="dim-label">$[B, 3, 224, 224] \longrightarrow [B, 196, 384]$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -425,11 +447,11 @@
 
         <div class="card vision-stream" style="width: 100%;">
           <div class="title-row">
-            <span>2&times;2 Spatial Merge</span>
+            <span>$2 \times 2$ Spatial Merge</span>
             <span class="badge">0 params</span>
           </div>
-          <div class="math-expr">Concat 4 adjacent patches (4&times;384)</div>
-          <div class="dim-label">[B, 196, 384] &rarr; [B, 49, 1536]</div>
+          <div class="math-expr">$\text{Concat}(2 \times 2\text{ adjacent patches } = 4 \times 384)$</div>
+          <div class="dim-label">$[B, 196, 384] \longrightarrow [B, 49, 1536]$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -442,8 +464,8 @@
             <span>Vision Projector (MLP)</span>
             <span class="badge">1.77M</span>
           </div>
-          <div class="math-expr">W<sub>1</sub> [1536, 768] &middot; GELU &middot; W<sub>2</sub> [768, 768]</div>
-          <div class="dim-label">Visual Tokens: <strong>[B, 49, 768]</strong></div>
+          <div class="math-expr">$W_1 [1536 \times 768] \cdot \text{GELU} \cdot W_2 [768 \times 768]$</div>
+          <div class="dim-label">Visual Tokens: $\mathbf{H}_{\text{vis}} \in \mathbb{R}^{B \times 49 \times 768}$</div>
         </div>
       </div>
 
@@ -451,7 +473,7 @@
       <div class="column">
         <div class="card input-node audio-stream" style="width: 100%;">
           <div class="title-row"><span>Audio Input</span></div>
-          <div class="dim-label">Mel-Spectrogram [B, 80, 200]</div>
+          <div class="dim-label">Log-Mel $\mathbf{X}_{\text{aud}} \in \mathbb{R}^{B \times 80 \times 200}$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -461,11 +483,11 @@
 
         <div class="card audio-stream" style="width: 100%;">
           <div class="title-row">
-            <span>1D Conv (4&times; Downsample)</span>
+            <span>1D Conv ($4\times$ Downsample)</span>
             <span class="badge">0.12M</span>
           </div>
-          <div class="math-expr">Conv1d(80, 256, k=3, s=2) &times; 2</div>
-          <div class="dim-label">[B, 80, 200] &rarr; [B, 50, 256]</div>
+          <div class="math-expr">$\text{Conv1d}(80, 256, k=3, s=2) \times 2$</div>
+          <div class="dim-label">$[B, 80, 200] \longrightarrow [B, 50, 256]$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -478,8 +500,8 @@
             <span>Audio Transformer (4L)</span>
             <span class="badge">5.40M</span>
           </div>
-          <div class="math-expr">Self-Attn &amp; MLP (dim=256, heads=4)</div>
-          <div class="dim-label">[B, 50, 256] &rarr; [B, 50, 256]</div>
+          <div class="math-expr">$\text{Self-Attn \& MLP } (d=256, h=4)$</div>
+          <div class="dim-label">$[B, 50, 256] \longrightarrow [B, 50, 256]$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -492,8 +514,8 @@
             <span>Audio Projector (MLP)</span>
             <span class="badge">0.79M</span>
           </div>
-          <div class="math-expr">W<sub>1</sub> [256, 768] &middot; SiLU &middot; W<sub>2</sub> [768, 768]</div>
-          <div class="dim-label">Audio Tokens: <strong>[B, 50, 768]</strong></div>
+          <div class="math-expr">$W_1 [256 \times 768] \cdot \text{SiLU} \cdot W_2 [768 \times 768]$</div>
+          <div class="dim-label">Audio Tokens: $\mathbf{H}_{\text{aud}} \in \mathbb{R}^{B \times 50 \times 768}$</div>
         </div>
       </div>
 
@@ -501,7 +523,7 @@
       <div class="column">
         <div class="card input-node text-stream" style="width: 100%;">
           <div class="title-row"><span>Text Input</span></div>
-          <div class="dim-label">Token IDs [B, S<sub>txt</sub>]</div>
+          <div class="dim-label">Token IDs $\mathbf{I}_{\text{txt}} \in \mathbb{N}^{B \times S_{\text{txt}}}$</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -514,9 +536,9 @@
             <span>Tied Embedding Table</span>
             <span class="badge badge-tied">37.76M (27.3%)</span>
           </div>
-          <div class="math-expr">W<sub>embed</sub> &isin; &reals;<sup>49164 &times; 768</sup></div>
-          <div class="dim-label">Indexed Lookup: [B, S<sub>txt</sub>] &times; W<sub>embed</sub></div>
-          <div class="dim-label" style="margin-top: 4px; color: #166534;">Shared with LM Head (0 params added)</div>
+          <div class="math-expr">$W_{\text{embed}} \in \mathbb{R}^{49164 \times 768}$</div>
+          <div class="dim-label">Lookup: $[B, S_{\text{txt}}] \times W_{\text{embed}}$</div>
+          <div class="dim-label" style="margin-top: 4px; color: #166534;">Shared with LM Head ($0$ params added)</div>
         </div>
 
         <svg class="connector-v" viewBox="0 0 18 18">
@@ -529,8 +551,8 @@
             <span>Text Embeddings</span>
             <span class="badge">Direct</span>
           </div>
-          <div class="math-expr">Inputs Embeds</div>
-          <div class="dim-label">Text Tokens: <strong>[B, S<sub>txt</sub>, 768]</strong></div>
+          <div class="math-expr">$\text{Inputs Embeds}$</div>
+          <div class="dim-label">Text Tokens: $\mathbf{H}_{\text{txt}} \in \mathbb{R}^{B \times S_{\text{txt}} \times 768}$</div>
         </div>
       </div>
     </div>
@@ -565,10 +587,10 @@
           <span class="badge badge-math">Dimension Algebra</span>
         </div>
         <div class="math-expr">
-          Inject Vis [B, 49, 768] &amp; Aud [B, 50, 768] into placeholder indices &rarr; Concat S = 49 + 50 + S<sub>txt</sub>
+          Inject $\mathbf{H}_{\text{vis}} [49]$ &amp; $\mathbf{H}_{\text{aud}} [50]$ into placeholder tokens $\longrightarrow \text{Total Length } S = 49 + 50 + S_{\text{txt}}$
         </div>
         <div class="dim-label">
-          Output Matrix: <strong>X<sub>0</sub> &isin; &reals;<sup>B &times; S &times; 768</sup></strong> &nbsp;|&nbsp; + RoPE Rotary Embeddings (YaRN Extensible 4K &rarr; 16K)
+          Output Matrix: $\mathbf{X}_0 \in \mathbb{R}^{B \times S \times 768}$ &nbsp;|&nbsp; $+$ RoPE Rotary Embeddings (YaRN Extensible $4\text{K} \to 16\text{K}$)
         </div>
       </div>
 
@@ -598,7 +620,7 @@
             </defs>
             <!-- Node dot at input -->
             <circle cx="75" cy="12" r="3" fill="#475569" />
-            <!-- Bypass Path: branches out left, travels down, and turns into add node -->
+            <!-- Bypass Path -->
             <path d="M 75,12 L 24,12 C 14,12 14,22 14,32 L 14,198 C 14,208 14,218 24,218 L 72,218"
                   fill="none" stroke="#64748b" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#arrow-blue)" />
             <rect x="2" y="105" width="24" height="38" rx="3" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="0.7" />
@@ -614,7 +636,7 @@
               <span>Pre-RMSNorm</span>
               <span class="badge">768 params</span>
             </div>
-            <div class="math-expr">X<sub>norm</sub> = RMSNorm(X) &isin; &reals;<sup>B &times; S &times; 768</sup></div>
+            <div class="math-expr">$\mathbf{X}_{\text{norm}} = \text{RMSNorm}(\mathbf{X}) \in \mathbb{R}^{B \times S \times 768}$</div>
           </div>
 
           <svg class="connector-v" viewBox="0 0 18 18">
@@ -632,21 +654,21 @@
             <div class="gqa-grid">
               <div class="gqa-cell">
                 <div class="cell-title">Query Projection (12 Heads)</div>
-                <div class="math-expr">W<sub>q</sub> [768, 768] &rarr; [B, 12, S, 64]</div>
-                <div class="dim-label">Per-Head RMSNorm(Q) &middot; RoPE Rotation</div>
+                <div class="math-expr">$W_q [768 \times 768] \longrightarrow Q \in \mathbb{R}^{B \times 12 \times S \times 64}$</div>
+                <div class="dim-label">Per-Head $\text{RMSNorm}(Q)$ &middot; RoPE Rotation</div>
               </div>
               <div class="gqa-cell">
                 <div class="cell-title">Key &amp; Value (4 Heads, Shared)</div>
-                <div class="math-expr">W<sub>k</sub>, W<sub>v</sub> [768, 256] &rarr; [B, 4, S, 64]</div>
-                <div class="dim-label">Per-Head RMSNorm(K) &middot; RoPE (66.7% KV save)</div>
+                <div class="math-expr">$W_k, W_v [768 \times 256] \longrightarrow K, V \in \mathbb{R}^{B \times 4 \times S \times 64}$</div>
+                <div class="dim-label">Per-Head $\text{RMSNorm}(K)$ &middot; RoPE (66.7% KV save)</div>
               </div>
             </div>
 
             <div class="math-expr" style="margin-top: 3px;">
-              Attn = Softmax( Q &middot; K<sup>T</sup> / &radic;64 + CausalMask ) &middot; V &isin; &reals;<sup>B &times; 12 &times; S &times; 64</sup> &rarr; Reshape [B, S, 768]
+              $\text{Attn} = \text{Softmax}\left(\frac{Q K^T}{\sqrt{64}} + M_{\text{causal}}\right) V \in \mathbb{R}^{B \times 12 \times S \times 64} \longrightarrow [B, S, 768]$
             </div>
             <div class="math-expr">
-              Output Projection: [B, S, 768] &times; W<sub>o</sub> [768, 768] &rarr; <strong>O<sub>attn</sub> &isin; &reals;<sup>B &times; S &times; 768</sup></strong>
+              Output Projection: $[B, S, 768] \times W_o [768 \times 768] \longrightarrow \mathbf{O}_{\text{attn}} \in \mathbb{R}^{B \times S \times 768}$
             </div>
           </div>
 
@@ -658,7 +680,7 @@
           <!-- Residual Addition Node -->
           <div class="add-row">
             <div class="add-node">&oplus;</div>
-            <span class="dim-label">Residual Add: <strong>X<sub>mid</sub> = X + O<sub>attn</sub></strong> &isin; &reals;<sup>B &times; S &times; 768</sup></span>
+            <span class="dim-label">Residual Add: $\mathbf{X}_{\text{mid}} = \mathbf{X} + \mathbf{O}_{\text{attn}} \in \mathbb{R}^{B \times S \times 768}$</span>
           </div>
         </div>
       </div>
@@ -699,7 +721,7 @@
               <span>Pre-RMSNorm</span>
               <span class="badge">768 params</span>
             </div>
-            <div class="math-expr">X<sub>norm2</sub> = RMSNorm(X<sub>mid</sub>) &isin; &reals;<sup>B &times; S &times; 768</sup></div>
+            <div class="math-expr">$\mathbf{X}_{\text{norm2}} = \text{RMSNorm}(\mathbf{X}_{\text{mid}}) \in \mathbb{R}^{B \times S \times 768}$</div>
           </div>
 
           <svg class="connector-v" viewBox="0 0 18 18">
@@ -716,22 +738,22 @@
             <!-- Gated FFN Branches -->
             <div class="swiglu-branches">
               <div class="branch-cell">
-                <div class="cell-title" style="font-size: 0.73rem; font-weight:600; color:#1e293b;">Gate Branch (SiLU)</div>
-                <div class="math-expr">X<sub>norm2</sub> &times; W<sub>gate</sub> [768, 2048] &rarr; SiLU</div>
-                <div class="dim-label">[B, S, 2048]</div>
+                <div class="cell-title" style="font-size: 0.75rem; font-weight:600; color:#1e293b;">Gate Branch ($\text{SiLU}$)</div>
+                <div class="math-expr">$\mathbf{X}_{\text{norm2}} \times W_{\text{gate}} [768 \times 2048] \to \text{SiLU}$</div>
+                <div class="dim-label">$[B, S, 2048]$</div>
               </div>
               <div class="branch-cell">
-                <div class="cell-title" style="font-size: 0.73rem; font-weight:600; color:#1e293b;">Up Branch (Linear)</div>
-                <div class="math-expr">X<sub>norm2</sub> &times; W<sub>up</sub> [768, 2048]</div>
-                <div class="dim-label">[B, S, 2048]</div>
+                <div class="cell-title" style="font-size: 0.75rem; font-weight:600; color:#1e293b;">Up Branch ($\text{Linear}$)</div>
+                <div class="math-expr">$\mathbf{X}_{\text{norm2}} \times W_{\text{up}} [768 \times 2048]$</div>
+                <div class="dim-label">$[B, S, 2048]$</div>
               </div>
             </div>
 
             <div class="math-expr" style="margin-top: 3px;">
-              H = SiLU(X<sub>norm2</sub> &middot; W<sub>gate</sub>) &odot; (X<sub>norm2</sub> &middot; W<sub>up</sub>) &isin; &reals;<sup>B &times; S &times; 2048</sup>
+              $\mathbf{H} = \text{SiLU}(\mathbf{X}_{\text{norm2}} \cdot W_{\text{gate}}) \odot (\mathbf{X}_{\text{norm2}} \cdot W_{\text{up}}) \in \mathbb{R}^{B \times S \times 2048}$
             </div>
             <div class="math-expr">
-              Down Projection: H &times; W<sub>down</sub> [2048, 768] &rarr; <strong>Y<sub>ffn</sub> &isin; &reals;<sup>B &times; S &times; 768</sup></strong>
+              Down Projection: $\mathbf{H} \times W_{\text{down}} [2048 \times 768] \longrightarrow \mathbf{Y}_{\text{ffn}} \in \mathbb{R}^{B \times S \times 768}$
             </div>
           </div>
 
@@ -743,7 +765,7 @@
           <!-- Residual Addition Node -->
           <div class="add-row">
             <div class="add-node">&oplus;</div>
-            <span class="dim-label">Residual Add: <strong>X<sub>out</sub> = X<sub>mid</sub> + Y<sub>ffn</sub></strong> &isin; &reals;<sup>B &times; S &times; 768</sup></span>
+            <span class="dim-label">Residual Add: $\mathbf{X}_{\text{out}} = \mathbf{X}_{\text{mid}} + \mathbf{Y}_{\text{ffn}} \in \mathbb{R}^{B \times S \times 768}$</span>
           </div>
         </div>
       </div>
@@ -766,7 +788,7 @@
           <span>Final RMSNorm</span>
           <span class="badge">768 params</span>
         </div>
-        <div class="math-expr">h<sub>final</sub> = RMSNorm(X<sub>layer16</sub>) &isin; &reals;<sup>B &times; S &times; 768</sup></div>
+        <div class="math-expr">$\mathbf{h}_{\text{final}} = \text{RMSNorm}(\mathbf{X}_{\text{layer16}}) \in \mathbb{R}^{B \times S \times 768}$</div>
       </div>
 
       <!-- Fork Connector into Heads -->
@@ -790,10 +812,10 @@
           <div class="card" style="width: 100%;">
             <div class="title-row">
               <span>Primary LM Head (Tied)</span>
-              <span class="badge badge-tied">0 M (Reused W<sub>embed</sub><sup>T</sup>)</span>
+              <span class="badge badge-tied">0 M (Reused $W_{\text{embed}}^T$)</span>
             </div>
-            <div class="math-expr">Logits = h<sub>final</sub> &times; W<sub>embed</sub><sup>T</sup> [768, 49164]</div>
-            <div class="dim-label">Matrix Multiplication &rarr; [B, S, 49164]</div>
+            <div class="math-expr">$\text{Logits} = \mathbf{h}_{\text{final}} \times W_{\text{embed}}^T [768 \times 49164]$</div>
+            <div class="dim-label">Matrix Multiplication $\longrightarrow [B, S, 49164]$</div>
           </div>
 
           <svg class="connector-v" viewBox="0 0 18 18">
@@ -803,7 +825,7 @@
 
           <div class="card input-node" style="width: 100%; border-color: #10b981; background: #f0fdf4;">
             <div class="title-row">
-              <strong style="color: #065f46;">Next-Token Prediction: P(t+1)</strong>
+              <strong style="color: #065f46;">Next-Token Prediction: $P(t+1)$</strong>
             </div>
             <div class="dim-label">Standard Autoregressive Cross-Entropy Loss</div>
           </div>
@@ -816,8 +838,8 @@
               <span>MTP Speculative Module</span>
               <span class="badge badge-primary">6.29M (1-Layer Transformer)</span>
             </div>
-            <div class="math-expr">[h<sub>final</sub>(t) &oplus; Embed(t+1)] &times; W<sub>mtp_proj</sub> &rarr; 1L Layer</div>
-            <div class="dim-label">Head: [B, S, 768] &times; W<sub>embed</sub><sup>T</sup> &rarr; [B, S, 49164]</div>
+            <div class="math-expr">$[\mathbf{h}_{\text{final}}(t) \oplus \text{Embed}(t+1)] \times W_{\text{mtp\_proj}} \to 1\text{L}$</div>
+            <div class="dim-label">Head: $[B, S, 768] \times W_{\text{embed}}^T \longrightarrow [B, S, 49164]$</div>
           </div>
 
           <svg class="connector-v" viewBox="0 0 18 18">
@@ -827,9 +849,9 @@
 
           <div class="card input-node" style="width: 100%; border-color: #0284c7; background: #f0f9ff;">
             <div class="title-row">
-              <strong style="color: #0369a1;">Speculative Prediction: P(t+2)</strong>
+              <strong style="color: #0369a1;">Speculative Prediction: $P(t+2)$</strong>
             </div>
-            <div class="dim-label">Multi-Token Drafting (Loss Weight: 0.3)</div>
+            <div class="dim-label">Multi-Token Drafting (Loss Weight: $0.3$)</div>
           </div>
         </div>
       </div>
