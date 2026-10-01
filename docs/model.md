@@ -85,58 +85,41 @@ flowchart LR
 
 ## 5. End-to-End Architecture Overview
 
-The following diagram illustrates the complete end-to-end tensor flow through Jerboa and JerboaVL—from raw multi-modal inputs, sequence projection, through the 16-layer interleaved transformer backbone, to the dual prediction heads:
+> 🌐 **Interactive Visual Blueprint**: Open [`docs/architecture.html`](file:///Users/jc/jerboa/docs/architecture.html) in any browser for an interactive, styled visual schematic of the entire model.
 
+### ① High-Level System Architecture
 ```mermaid
 flowchart TD
-    subgraph IN ["1. Multimodal Ingestion & Feature Projection"]
-        direction TB
-        IMG["Vision Stream<br/>Image (224x224x3)"] --> VIT["Lightweight ViT<br/>Patch 16 (14x14 Grid)"]
-        VIT --> SM["2x2 Spatial Merge<br/>196 -> 49 Tokens"]
-        SM --> VP["Vision Projector<br/>Linear -> SiLU -> Linear -> RMSNorm<br/>[49, 768]"]
+    IMG["Vision Stream<br/>(224x224 RGB)"] --> VIT["ViT (Patch 16)<br/>2x2 Spatial Merge"] --> VP["Vision Projector<br/>[49, 768]"]
+    AUD["Audio Stream<br/>(Mel-80 Spectrogram)"] --> AENC["1D Conv (4x Down)<br/>+ 4L Transformer"] --> AP["Audio Projector<br/>[50, 768]"]
+    TXT["Text Stream<br/>(ChatML Tokens)"] --> EMB["Tied Word Embedding<br/>(49,164 x 768)"]
 
-        AUD["Audio Stream<br/>80-band Mel-Spectrogram"] --> AENC["1D Conv (4x Downsample)<br/>+ 4L Transformer"]
-        AENC --> AP["Audio Projector<br/>Linear -> SiLU -> Linear -> RMSNorm<br/>[50, 768]"]
+    VP --> FUSE["Dynamic Sequence Assembly<br/>[Batch, Seq_Len, 768]"]
+    AP --> FUSE
+    EMB --> FUSE
 
-        TXT["Text Stream<br/>Input Tokens &lt;|im_start|&gt;..."] --> EMB["Tied Word Embedding<br/>Table: 49,164 x 768<br/>[L_text, 768]"]
+    FUSE --> ROPE["Rotary Position Embedding (RoPE)<br/>YaRN Scaling (4K -> 16K)"]
+    ROPE --> BB["16-Layer Interleaved Backbone<br/>(3 SWA Layers : 1 Global Anchor Layer)"]
+    BB --> NORM["Final RMSNorm [768]"]
 
-        VP --> INJ["Dynamic Sequence Assembly<br/>Replace &lt;|image|&gt; &amp; &lt;|audio|&gt; tokens<br/>Shape: [B, Seq_Len, 768]"]
-        AP --> INJ
-        EMB --> INJ
-    end
+    NORM --> HEAD1["Primary LM Head (Tied Weights)<br/>Linear(768 -> 49,164)"]
+    NORM --> MTP["MTP Auxiliary Speculative Module<br/>1L Transformer Block"]
 
-    INJ --> ROPE["Rotary Position Embedding (RoPE)<br/>YaRN Scaling (4K -> 16K Context)"]
+    HEAD1 --> OUT1["Token t+1 Next-Token Logits"]
+    MTP --> OUT2["Token t+2 Speculative Logits"]
+```
 
-    subgraph BB ["2. Core Transformer Backbone (16 Layers, d_model=768)"]
-        direction TB
-        ROPE --> L1["Layers 1..3: Sliding Window Attention (Window=2048)"]
-        L1 --> L4["Layer 4: Full Global Attention (Anchor Layer)"]
-        L4 --> L_MID["... Layers 5..15: Periodic Interleaved Pattern (3 SWA : 1 Global) ..."]
-        L_MID --> L16["Layer 16: Full Global Attention (Anchor Layer)"]
+### ② Single Decoder Layer Internal Anatomy
+```mermaid
+flowchart TD
+    INP["Hidden State Input (x)"] --> N1["Pre-RMSNorm"]
+    N1 --> GQA["GQA Attention (12 Q : 4 KV)<br/>+ Per-Head QK-Norm<br/>+ SWA (2048 Window) / Global"]
+    GQA --> ADD1["Residual Add (+)"]
+    INP --> ADD1
 
-        subgraph BLOCK ["Detailed Block Architecture (Layer i)"]
-            direction TB
-            B_IN["Input Hidden State (x)"] --> N1["Pre-RMSNorm"]
-            N1 --> GQA["GQA Attention (12 Q-Heads : 4 KV-Heads)<br/>- QK-Norm: RMSNorm(Q), RMSNorm(K)<br/>- SWA Window / Global Context<br/>- SDPA Metal Hardware Kernel"]
-            GQA --> ADD1["Residual Add (+)"]
-            B_IN --> ADD1
-
-            ADD1 --> N2["Pre-RMSNorm"]
-            N2 --> FFN["SwiGLU Feed-Forward Network<br/>- Gate &amp; Up: Linear(768 -> 2048)<br/>- Act: SiLU(Gate) * Up<br/>- Down: Linear(2048 -> 768)"]
-            FFN --> ADD2["Residual Add (+)"]
-            ADD1 --> ADD2
-        end
-    end
-
-    L16 --> FNORM["Final RMSNorm [768]"]
-
-    subgraph OUT ["3. Dual Prediction Heads & Speculative Decoding"]
-        direction TB
-        FNORM --> HEAD1["Primary LM Head<br/>Tied Weights with Embedding<br/>Linear(768 -> 49,164)"]
-        HEAD1 --> P1["Token t+1 Next-Token Logits"]
-
-        FNORM --> MTP["MTP Auxiliary Module<br/>Hidden State + Embed(t+1)<br/>1-Layer Transformer Block"]
-        MTP --> HEAD2["MTP Secondary Head<br/>Linear(768 -> 49,164)"]
-        HEAD2 --> P2["Token t+2 Speculative Logits"]
-    end
+    ADD1 --> N2["Pre-RMSNorm"]
+    N2 --> FFN["SwiGLU FFN (d=768 -> 2048 -> 768)<br/>SiLU(Gate) * Up -> Down"]
+    FFN --> ADD2["Residual Add (+)"]
+    ADD1 --> ADD2
+    ADD2 --> OUT["Layer Output (x)"]
 ```
