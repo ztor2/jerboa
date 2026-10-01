@@ -80,3 +80,63 @@ flowchart LR
 - **Audio**: 80-channel log-Mel spectrogram encoder with 1D convolution downsampling.
 - **Alignment**: 2-layer MLP projectors align visual and acoustic feature representations into LLM token embedding space.
 - **Modular Architecture**: Vision and Audio projectors can be trained, saved, and loaded independently as lightweight plug-in modules (`projector.pt` ~2–3MB).
+
+---
+
+## 5. End-to-End Architecture Overview
+
+The following diagram illustrates the complete end-to-end tensor flow through Jerboa and JerboaVL—from raw multi-modal inputs, sequence projection, through the 16-layer interleaved transformer backbone, to the dual prediction heads:
+
+```mermaid
+flowchart TD
+    subgraph IN ["1. Multimodal Ingestion & Feature Projection"]
+        direction TB
+        IMG["Vision Stream<br/>Image (224x224x3)"] --> VIT["Lightweight ViT<br/>Patch 16 (14x14 Grid)"]
+        VIT --> SM["2x2 Spatial Merge<br/>196 -> 49 Tokens"]
+        SM --> VP["Vision Projector<br/>Linear -> SiLU -> Linear -> RMSNorm<br/>[49, 768]"]
+
+        AUD["Audio Stream<br/>80-band Mel-Spectrogram"] --> AENC["1D Conv (4x Downsample)<br/>+ 4L Transformer"]
+        AENC --> AP["Audio Projector<br/>Linear -> SiLU -> Linear -> RMSNorm<br/>[50, 768]"]
+
+        TXT["Text Stream<br/>Input Tokens &lt;|im_start|&gt;..."] --> EMB["Tied Word Embedding<br/>Table: 49,164 x 768<br/>[L_text, 768]"]
+
+        VP --> INJ["Dynamic Sequence Assembly<br/>Replace &lt;|image|&gt; &amp; &lt;|audio|&gt; tokens<br/>Shape: [B, Seq_Len, 768]"]
+        AP --> INJ
+        EMB --> INJ
+    end
+
+    INJ --> ROPE["Rotary Position Embedding (RoPE)<br/>YaRN Scaling (4K -> 16K Context)"]
+
+    subgraph BB ["2. Core Transformer Backbone (16 Layers, d_model=768)"]
+        direction TB
+        ROPE --> L1["Layers 1..3: Sliding Window Attention (Window=2048)"]
+        L1 --> L4["Layer 4: Full Global Attention (Anchor Layer)"]
+        L4 --> L_MID["... Layers 5..15: Periodic Interleaved Pattern (3 SWA : 1 Global) ..."]
+        L_MID --> L16["Layer 16: Full Global Attention (Anchor Layer)"]
+
+        subgraph BLOCK ["Detailed Block Architecture (Layer i)"]
+            direction TB
+            B_IN["Input Hidden State (x)"] --> N1["Pre-RMSNorm"]
+            N1 --> GQA["GQA Attention (12 Q-Heads : 4 KV-Heads)<br/>- QK-Norm: RMSNorm(Q), RMSNorm(K)<br/>- SWA Window / Global Context<br/>- SDPA Metal Hardware Kernel"]
+            GQA --> ADD1["Residual Add (+)"]
+            B_IN --> ADD1
+
+            ADD1 --> N2["Pre-RMSNorm"]
+            N2 --> FFN["SwiGLU Feed-Forward Network<br/>- Gate &amp; Up: Linear(768 -> 2048)<br/>- Act: SiLU(Gate) * Up<br/>- Down: Linear(2048 -> 768)"]
+            FFN --> ADD2["Residual Add (+)"]
+            ADD1 --> ADD2
+        end
+    end
+
+    L16 --> FNORM["Final RMSNorm [768]"]
+
+    subgraph OUT ["3. Dual Prediction Heads & Speculative Decoding"]
+        direction TB
+        FNORM --> HEAD1["Primary LM Head<br/>Tied Weights with Embedding<br/>Linear(768 -> 49,164)"]
+        HEAD1 --> P1["Token t+1 Next-Token Logits"]
+
+        FNORM --> MTP["MTP Auxiliary Module<br/>Hidden State + Embed(t+1)<br/>1-Layer Transformer Block"]
+        MTP --> HEAD2["MTP Secondary Head<br/>Linear(768 -> 49,164)"]
+        HEAD2 --> P2["Token t+2 Speculative Logits"]
+    end
+```

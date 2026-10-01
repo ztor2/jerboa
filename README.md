@@ -4,7 +4,7 @@
 
 # Jerboa
 
-**Lightweight Multimodal Language Model**  (in development)
+**Lightweight Multimodal LM**  (in development)
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.14_MPS-orange.svg)
@@ -33,8 +33,7 @@
 
 ## Model & Checkpoints
 
-Model weights and tokenizer are hosted on the Hugging Face Hub:
-- 🤗 **Hugging Face Repository**: [ztor2/jerboa](https://huggingface.co/ztor2/jerboa)
+- 🤗 **Repository**: [ztor2/jerboa](https://huggingface.co/ztor2/jerboa)
 
 ```python
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -45,10 +44,3 @@ model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True)
 ```
 
 ---
-
-## Documentation
-
-- **[Model Architecture & Design](docs/model.md)**: Specifications, GQA, SWA, MTP, YaRN, and Multimodal encoder details.
-- **[Training & Data Lifecycle](docs/train.md)**: Symmetric data mapping, rolling pre-training, SFT, DPO, GRPO, and Mac long-running guide.
-- **[Inference & Deployment](docs/infer.md)**: Streaming chat REPL, multimodal reasoning, benchmarking, and quantization.
-

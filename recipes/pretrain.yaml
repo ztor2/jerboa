@@ -1,6 +1,6 @@
 # Pre-training Recipe (Rolling-Buffer on Apple Silicon / MPS)
-mode: stream
-source: fineweb-edu
+mode: file
+source: data/pretrain/fineweb_edu_sample.txt
 min_score: 3
 chunks: 5
 docs_per_chunk: 500
