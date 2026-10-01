@@ -81,6 +81,7 @@ def upload_checkpoint(
     repo_name: str = "jerboa-sft",
     private: bool = False,
     stage: str = "sft",
+    include_manifests: bool = True,
 ):
     if not os.path.exists(checkpoint_dir):
         print(f"❌ Checkpoint directory '{checkpoint_dir}' does not exist.")
@@ -100,7 +101,7 @@ def upload_checkpoint(
     print(f"\n📦 Preparing model files for '{repo_id}'...")
 
     # 2. Bundle remote code for Hugging Face Hub trust_remote_code
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     model_dir = os.path.join(project_root, "model")
 
     for filename in ["config.py", "modeling.py"]:
@@ -109,7 +110,22 @@ def upload_checkpoint(
         shutil.copy2(src, dst)
         print(f"  └ Copied remote code: {filename}")
 
-    # 3. Create Model Card README.md if not present
+    # 3. Bundle data manifests if present
+    if include_manifests:
+        manifests_src = os.path.join(project_root, "data", "manifests")
+        if os.path.exists(manifests_src) and os.listdir(manifests_src):
+            manifests_dst = os.path.join(checkpoint_dir, "manifests")
+            os.makedirs(manifests_dst, exist_ok=True)
+            for item in os.listdir(manifests_src):
+                s = os.path.join(manifests_src, item)
+                d = os.path.join(manifests_dst, item)
+                if os.path.isfile(s):
+                    shutil.copy2(s, d)
+                elif os.path.isdir(s):
+                    shutil.copytree(s, d, dirs_exist_ok=True)
+            print(f"  └ Bundled data provenance manifests from 'data/manifests'")
+
+    # 4. Create Model Card README.md if not present
     readme_path = os.path.join(checkpoint_dir, "README.md")
     if not os.path.exists(readme_path):
         card_content = generate_model_card(repo_id, stage, 145.9)
@@ -139,6 +155,7 @@ if __name__ == "__main__":
     parser.add_argument("--repo_name", type=str, default="jerboa-sft", help="Repository name on HF Hub")
     parser.add_argument("--private", action="store_true", help="Upload as a private repository")
     parser.add_argument("--stage", type=str, default="sft", choices=["pretrain", "sft", "dpo", "grpo"], help="Training stage")
+    parser.add_argument("--no_manifests", action="store_true", help="Do not bundle data manifests")
     args = parser.parse_args()
 
     upload_checkpoint(
@@ -146,4 +163,5 @@ if __name__ == "__main__":
         repo_name=args.repo_name,
         private=args.private,
         stage=args.stage,
+        include_manifests=not args.no_manifests,
     )
