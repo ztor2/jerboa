@@ -3,23 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jerboa & JerboaVL — Architecture Blueprint</title>
+  <title>Jerboa Architecture Diagram</title>
   <style>
-    :root {
-      --bg: #0b0f19;
-      --card-bg: #131b2e;
-      --card-border: #1f2d4d;
-      --text-main: #f1f5f9;
-      --text-muted: #94a3b8;
-      --accent-vision: #38bdf8;
-      --accent-audio: #fb923c;
-      --accent-text: #4ade80;
-      --accent-core: #818cf8;
-      --accent-ffn: #c084fc;
-      --accent-head: #f43f5e;
-      --connector: #334155;
-    }
-
     * {
       box-sizing: border-box;
       margin: 0;
@@ -27,468 +12,305 @@
     }
 
     body {
-      background-color: var(--bg);
-      color: var(--text-main);
+      background-color: #f8fafc;
+      color: #0f172a;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       padding: 40px 20px;
-      line-height: 1.5;
+      display: flex;
+      justify-content: center;
     }
 
-    .container {
-      max-width: 1100px;
-      margin: 0 auto;
+    .diagram-container {
+      width: 100%;
+      max-width: 920px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 40px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
     }
 
-    header {
+    h1 {
+      font-size: 1.3rem;
+      font-weight: 700;
       text-align: center;
-      margin-bottom: 40px;
+      margin-bottom: 30px;
+      letter-spacing: -0.3px;
+      color: #1e293b;
     }
 
-    header h1 {
-      font-size: 2.2rem;
-      font-weight: 800;
-      letter-spacing: -0.5px;
-      background: linear-gradient(135deg, #38bdf8, #818cf8, #c084fc);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+    /* Stream Columns */
+    .stream-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
       margin-bottom: 8px;
     }
 
-    header p {
-      color: var(--text-muted);
-      font-size: 1rem;
+    .col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
     }
 
-    .flow-card {
-      background: var(--card-bg);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 24px;
-      margin-bottom: 24px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    /* Blocks */
+    .box {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      background: #ffffff;
+      text-align: center;
+      font-size: 0.8rem;
+      color: #1e293b;
+    }
+
+    .box.input {
+      background: #f1f5f9;
+      font-weight: 600;
+      border-color: #94a3b8;
+    }
+
+    .box.projector {
+      background: #fafafa;
+      border-style: dashed;
+    }
+
+    .shape {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      color: #64748b;
+      margin-top: 2px;
+    }
+
+    /* SVG Connectors */
+    .line-v {
+      width: 1px;
+      height: 16px;
+      background: #94a3b8;
       position: relative;
     }
 
-    .section-title {
+    .line-v::after {
+      content: "";
+      position: absolute;
+      bottom: 0;
+      left: -3px;
+      border-width: 4px 3px 0 3px;
+      border-style: solid;
+      border-color: #94a3b8 transparent transparent transparent;
+    }
+
+    /* Assembly Node */
+    .assembly-box {
+      width: 100%;
+      padding: 10px;
+      margin: 12px 0;
+      background: #f8fafc;
+      border: 1.5px solid #0f172a;
+      border-radius: 4px;
+      text-align: center;
       font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 1.2px;
-      font-weight: 700;
-      margin-bottom: 18px;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .badge {
-      display: inline-block;
-      font-size: 0.72rem;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      padding: 2px 8px;
-      border-radius: 6px;
-      background: rgba(255, 255, 255, 0.08);
-      color: var(--text-muted);
-    }
-
-    /* Column Grid for Streams */
-    .stream-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-    }
-
-    .stream-box {
-      background: rgba(255, 255, 255, 0.02);
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      padding: 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-
-    .stream-box.vision { border-top: 3px solid var(--accent-vision); }
-    .stream-box.audio  { border-top: 3px solid var(--accent-audio); }
-    .stream-box.text   { border-top: 3px solid var(--accent-text); }
-
-    .stream-box h3 {
-      font-size: 0.95rem;
       font-weight: 600;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
     }
 
-    .node {
-      background: #0f172a;
-      border: 1px solid #1e293b;
-      padding: 10px 12px;
+    /* Backbone Container */
+    .backbone-box {
+      border: 1.5px solid #64748b;
       border-radius: 6px;
-      font-size: 0.85rem;
-    }
-
-    .node .desc {
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      margin-top: 3px;
-    }
-
-    .node .shape {
-      font-family: ui-monospace, monospace;
-      font-size: 0.72rem;
-      color: #38bdf8;
-      margin-top: 4px;
-    }
-
-    .arrow-down {
-      text-align: center;
-      color: var(--connector);
-      font-size: 1.1rem;
-      line-height: 1;
-    }
-
-    /* Fusion Bar */
-    .fusion-bar {
-      background: linear-gradient(90deg, rgba(56, 189, 248, 0.15), rgba(129, 140, 248, 0.15), rgba(74, 222, 128, 0.15));
-      border: 1px dashed var(--accent-core);
-      border-radius: 8px;
-      padding: 16px;
-      text-align: center;
+      padding: 20px;
       margin: 16px 0;
+      background: #fcfcfd;
+      position: relative;
     }
 
-    /* Backbone Layout */
-    .backbone-layout {
-      display: grid;
-      grid-template-columns: 1fr 1.6fr;
-      gap: 20px;
+    .backbone-label {
+      position: absolute;
+      top: -10px;
+      left: 16px;
+      background: #ffffff;
+      padding: 0 8px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
 
-    .layer-stack {
+    /* Decoder Layer Details */
+    .decoder-layer {
       display: flex;
       flex-direction: column;
-      gap: 8px;
-    }
-
-    .layer-item {
-      background: #0f172a;
-      border: 1px solid #1e293b;
-      padding: 8px 12px;
-      border-radius: 6px;
-      font-size: 0.82rem;
-      display: flex;
-      justify-content: space-between;
       align-items: center;
+      gap: 10px;
+      max-width: 600px;
+      margin: 0 auto;
     }
 
-    .layer-item.anchor {
-      border-left: 3px solid var(--accent-head);
-      background: rgba(244, 63, 94, 0.08);
-      font-weight: 600;
-    }
-
-    .layer-item.swa {
-      border-left: 3px solid var(--accent-core);
-    }
-
-    .layer-detail {
-      background: #0b1329;
-      border: 1px solid var(--card-border);
-      border-radius: 8px;
-      padding: 16px;
+    .residual-block {
+      width: 100%;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 12px;
+      background: #ffffff;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      align-items: center;
+      gap: 8px;
+      position: relative;
     }
 
-    .sub-block {
-      background: #111c38;
-      border: 1px solid #203058;
-      border-radius: 6px;
-      padding: 12px;
+    .residual-indicator {
+      font-size: 0.7rem;
+      color: #64748b;
+      border: 1px dashed #cbd5e1;
+      padding: 2px 6px;
+      border-radius: 3px;
     }
 
-    .sub-block-title {
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--accent-core);
-      margin-bottom: 6px;
+    .schedule-badge {
+      text-align: center;
+      font-size: 0.75rem;
+      color: #475569;
+      background: #f1f5f9;
+      border-radius: 4px;
+      padding: 4px 10px;
+      margin-top: 12px;
     }
 
-    .sub-block-title.ffn {
-      color: var(--accent-ffn);
-    }
-
-    /* Dual Heads */
-    .head-grid {
+    /* Output Heads */
+    .output-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 16px;
+      gap: 20px;
+      margin-top: 12px;
     }
 
-    .head-box {
-      background: #0f172a;
-      border: 1px solid #1e293b;
-      border-radius: 8px;
-      padding: 16px;
-    }
-
-    .head-box h4 {
-      font-size: 0.9rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-      color: var(--accent-head);
-    }
-
-    .specs-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 16px;
-      font-size: 0.85rem;
-    }
-
-    .specs-table th, .specs-table td {
-      border: 1px solid var(--card-border);
-      padding: 8px 12px;
-      text-align: left;
-    }
-
-    .specs-table th {
-      background: rgba(255, 255, 255, 0.04);
-      color: var(--text-muted);
-    }
-
-    @media (max-width: 768px) {
-      .stream-grid, .backbone-layout, .head-grid {
-        grid-template-columns: 1fr;
-      }
+    .center-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
   </style>
 </head>
 <body>
-  <div class="container">
-    <header>
-      <h1>Jerboa & JerboaVL</h1>
-      <p>Comprehensive End-to-End Architectural Blueprint (~138M–146M Parameters)</p>
-    </header>
+  <div class="diagram-container">
+    <h1>Jerboa & JerboaVL Architecture</h1>
 
-    <!-- SECTION 1: INGESTION -->
-    <div class="flow-card">
-      <div class="section-title" style="color: var(--accent-vision);">
-        <span>01</span> Multimodal Ingestion & Feature Projectors
+    <!-- 1. MULTIMODAL INPUTS -->
+    <div class="stream-row">
+      <!-- Vision -->
+      <div class="col">
+        <div class="box input">Image Input<div class="shape">(3, 224, 224)</div></div>
+        <div class="line-v"></div>
+        <div class="box">ViT Encoder (Patch 16)<div class="shape">(196, 384)</div></div>
+        <div class="line-v"></div>
+        <div class="box">2×2 Spatial Merge<div class="shape">(49, 1536)</div></div>
+        <div class="line-v"></div>
+        <div class="box projector">Vision Projector (MLP)<div class="shape">(49, 768)</div></div>
       </div>
 
-      <div class="stream-grid">
-        <!-- Vision -->
-        <div class="stream-box vision">
-          <h3>Vision Stream <span class="badge">ViT + 2x2</span></h3>
-          <div class="node">
-            <strong>Input Image</strong>
-            <div class="desc">224 × 224 RGB image</div>
-            <div class="shape">[3, 224, 224]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>ViT Encoder</strong>
-            <div class="desc">Patch 16 (14×14 grid, 196 patches)</div>
-            <div class="shape">[196, 384]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>2×2 Spatial Merge</strong>
-            <div class="desc">4 patches merged into 1 token</div>
-            <div class="shape">[49, 1536]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>Vision Projector</strong>
-            <div class="desc">Linear → SiLU → Linear → RMSNorm</div>
-            <div class="shape">[49, 768]</div>
-          </div>
-        </div>
-
-        <!-- Audio -->
-        <div class="stream-box audio">
-          <h3>Audio Stream <span class="badge">1D Conv + Trans</span></h3>
-          <div class="node">
-            <strong>Audio Waveform</strong>
-            <div class="desc">16kHz Mel-spectrogram</div>
-            <div class="shape">[80, 200]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>Lightweight Encoder</strong>
-            <div class="desc">Two strided Conv1d (4x downsample) + 4L Transformer</div>
-            <div class="shape">[50, 256]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>Audio Projector</strong>
-            <div class="desc">Linear → SiLU → Linear → RMSNorm</div>
-            <div class="shape">[50, 768]</div>
-          </div>
-        </div>
-
-        <!-- Text -->
-        <div class="stream-box text">
-          <h3>Text Stream <span class="badge">Tied Embedding</span></h3>
-          <div class="node">
-            <strong>Prompt Tokens</strong>
-            <div class="desc">ChatML tokens + Multimodal placeholders (&lt;|image|&gt;, &lt;|audio|&gt;)</div>
-            <div class="shape">[Seq_Len]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>Word Embedding Table</strong>
-            <div class="desc">Tied with LM Head weights (saves ~25M params)</div>
-            <div class="shape">[49,164, 768]</div>
-          </div>
-          <div class="arrow-down">↓</div>
-          <div class="node">
-            <strong>Base Embeddings</strong>
-            <div class="desc">Text representations prior to multimodal injection</div>
-            <div class="shape">[Seq_Len, 768]</div>
-          </div>
-        </div>
+      <!-- Audio -->
+      <div class="col">
+        <div class="box input">Audio Mel-Spectrogram<div class="shape">(80, 200)</div></div>
+        <div class="line-v"></div>
+        <div class="box">1D Conv (4× Down)<div class="shape">(50, 256)</div></div>
+        <div class="line-v"></div>
+        <div class="box">4-Layer Transformer<div class="shape">(50, 256)</div></div>
+        <div class="line-v"></div>
+        <div class="box projector">Audio Projector (MLP)<div class="shape">(50, 768)</div></div>
       </div>
 
-      <!-- Fusion Bar -->
-      <div class="fusion-bar">
-        <strong>Dynamic Sequence Assembly</strong>
-        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;">
-          Replaces &lt;|image|&gt; with 49 visual tokens and &lt;|audio|&gt; with 50 acoustic tokens into a unified embedding stream:
-          <span style="color: #818cf8; font-family: monospace;">[Batch, Total_Seq_Len, 768]</span>
-        </div>
-      </div>
-
-      <div style="text-align: center;">
-        <span class="badge" style="background: rgba(129, 140, 248, 0.15); color: #818cf8; padding: 6px 14px; font-size: 0.8rem;">
-          + RoPE (Rotary Position Embedding) with YaRN Scaling (4,096 extensible to 16,384 tokens)
-        </span>
+      <!-- Text -->
+      <div class="col">
+        <div class="box input">Text Prompt Tokens<div class="shape">Input IDs (Seq_Len)</div></div>
+        <div class="line-v"></div>
+        <div class="box" style="margin-top: 38px;">Tied Embedding Table<div class="shape">(49,164, 768)</div></div>
+        <div class="line-v"></div>
+        <div class="box projector">Text Embeddings<div class="shape">(Seq_Len, 768)</div></div>
       </div>
     </div>
 
-    <!-- SECTION 2: BACKBONE -->
-    <div class="flow-card">
-      <div class="section-title" style="color: var(--accent-core);">
-        <span>02</span> 16-Layer Interleaved Transformer Backbone (d_model=768)
+    <!-- SEQUENCE ASSEMBLY -->
+    <div class="center-col">
+      <div class="line-v"></div>
+      <div class="assembly-box">
+        Dynamic Sequence Injection &amp; Concat
+        <div class="shape">Replaces &lt;|image|&gt; &amp; &lt;|audio|&gt; → Shape: (Batch, Total_Len, 768)</div>
       </div>
+      <div class="line-v"></div>
+      <div class="box" style="max-width: 400px; background: #f8fafc;">
+        + RoPE (YaRN Context Scaling: 4K → 16K)
+      </div>
+      <div class="line-v"></div>
+    </div>
 
-      <div class="backbone-layout">
-        <!-- Layer Schedule Stack -->
-        <div>
-          <div style="font-size: 0.85rem; font-weight: 600; margin-bottom: 10px;">Layer Schedule Pattern</div>
-          <div class="layer-stack">
-            <div class="layer-item swa"><span>Layer 01 – 03</span> <span class="badge">SWA (Window 2048)</span></div>
-            <div class="layer-item anchor"><span>Layer 04 [Anchor]</span> <span class="badge" style="color: #f43f5e;">Full Global Attention</span></div>
-            <div class="layer-item swa"><span>Layer 05 – 07</span> <span class="badge">SWA (Window 2048)</span></div>
-            <div class="layer-item anchor"><span>Layer 08 [Anchor]</span> <span class="badge" style="color: #f43f5e;">Full Global Attention</span></div>
-            <div class="layer-item swa"><span>Layer 09 – 11</span> <span class="badge">SWA (Window 2048)</span></div>
-            <div class="layer-item anchor"><span>Layer 12 [Anchor]</span> <span class="badge" style="color: #f43f5e;">Full Global Attention</span></div>
-            <div class="layer-item swa"><span>Layer 13 – 15</span> <span class="badge">SWA (Window 2048)</span></div>
-            <div class="layer-item anchor"><span>Layer 16 [Anchor]</span> <span class="badge" style="color: #f43f5e;">Full Global Attention</span></div>
+    <!-- 2. TRANSFORMER BACKBONE (x16) -->
+    <div class="backbone-box">
+      <div class="backbone-label">Transformer Backbone (×16 Layers, d_model = 768)</div>
+
+      <div class="decoder-layer">
+        <!-- Attention Block -->
+        <div class="residual-block">
+          <div class="box" style="background: #f8fafc;">Pre-RMSNorm</div>
+          <div class="line-v"></div>
+          <div class="box">
+            Grouped-Query Attention (GQA: 12 Q-heads / 4 KV-heads)
+            <div class="shape">Per-head QK-Norm + Scaled Dot-Product Attention</div>
           </div>
-          <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 10px;">
-            💡 Cuts KV-Cache VRAM by ~60% in long context while retaining global context recall via 4 anchor layers.
-          </div>
+          <div class="line-v"></div>
+          <div class="residual-indicator">+ Residual Connection</div>
         </div>
 
-        <!-- Detail of 1 Block -->
-        <div class="layer-detail">
-          <div style="font-size: 0.85rem; font-weight: 600; display: flex; justify-content: space-between;">
-            <span>Single Decoder Layer Anatomy</span>
-            <span class="badge">Pre-RMSNorm + Residuals</span>
+        <div class="line-v"></div>
+
+        <!-- FFN Block -->
+        <div class="residual-block">
+          <div class="box" style="background: #f8fafc;">Pre-RMSNorm</div>
+          <div class="line-v"></div>
+          <div class="box">
+            SwiGLU Feed-Forward Network
+            <div class="shape">Linear(768 → 2048) · SiLU · Linear(2048 → 768)</div>
           </div>
+          <div class="line-v"></div>
+          <div class="residual-indicator">+ Residual Connection</div>
+        </div>
 
-          <div class="sub-block">
-            <div class="sub-block-title">① Grouped-Query Attention (GQA 3:1) + QK-Norm</div>
-            <div style="font-size: 0.8rem; color: var(--text-muted);">
-              • <strong>12 Query Heads : 4 KV Heads</strong> (66.7% KV memory reduction)<br />
-              • <strong>QK-Norm</strong>: Per-head RMSNorm on Q and K vectors prior to dot product (prevents entropy collapse)<br />
-              • <strong>Kernel</strong>: Native PyTorch SDPA accelerated by Metal Performance Shaders (MPS)
-            </div>
-          </div>
-
-          <div class="arrow-down">↓ Residual Connection (+)</div>
-
-          <div class="sub-block">
-            <div class="sub-block-title ffn">② SwiGLU Feed-Forward Network (FFN)</div>
-            <div style="font-size: 0.8rem; color: var(--text-muted);">
-              • <strong>Expansion</strong>: 768 → 2,048 ($d_{ffn} \approx 2.67 \times d_{model}$)<br />
-              • <strong>Formula</strong>: <span style="font-family: monospace; color: #c084fc;">(SiLU(x · W_gate) ⊗ (x · W_up)) · W_down</span><br />
-              • <strong>Output</strong>: Projects back to 768 hidden dimensions
-            </div>
-          </div>
-
-          <div class="arrow-down">↓ Residual Connection (+)</div>
+        <!-- Layer Schedule -->
+        <div class="schedule-badge">
+          Layer Schedule: 12 Layers SWA (Window 2048) · 4 Periodic Global Anchor Layers (Layers 4, 8, 12, 16)
         </div>
       </div>
     </div>
 
-    <!-- SECTION 3: HEADS -->
-    <div class="flow-card">
-      <div class="section-title" style="color: var(--accent-head);">
-        <span>03</span> Final Normalization & Dual Output Heads
-      </div>
+    <!-- 3. OUTPUT HEADS -->
+    <div class="center-col">
+      <div class="line-v"></div>
+      <div class="box" style="max-width: 320px; background: #f8fafc;">Final RMSNorm (d = 768)</div>
+      <div class="line-v"></div>
+    </div>
 
-      <div style="text-align: center; margin-bottom: 16px;">
-        <span class="badge" style="background: rgba(255, 255, 255, 0.08); padding: 4px 12px;">Final RMSNorm Layer (d_model=768)</span>
-      </div>
-
-      <div class="head-grid">
-        <div class="head-box">
-          <h4>Primary LM Head (Next-Token t+1)</h4>
-          <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-            Standard causal autoregressive language head using tied embedding weights:
-          </div>
-          <div class="node">
-            Linear(768 → 49,164) → Softmax → <strong>Token P(t+1)</strong>
-          </div>
+    <div class="output-row">
+      <!-- Main Head -->
+      <div class="col">
+        <div class="box">
+          Primary LM Head (Tied Weights)
+          <div class="shape">Linear(768 → 49,164)</div>
         </div>
-
-        <div class="head-box">
-          <h4>MTP Auxiliary Module (Speculative t+2)</h4>
-          <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px;">
-            1-layer speculative transformer block predicting future token concurrently:
-          </div>
-          <div class="node">
-            Concatenate [h_t + Embed(x_{t+1})] → 1L Transformer → <strong>Token P(t+2)</strong>
-          </div>
-        </div>
+        <div class="line-v"></div>
+        <div class="box input">Next Token Logits: P(t+1)</div>
       </div>
 
-      <!-- Specs Table -->
-      <table class="specs-table">
-        <thead>
-          <tr>
-            <th>Module</th>
-            <th>Specification</th>
-            <th>Key Hardware / ML Advantage</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><strong>Backbone</strong></td>
-            <td>16 Layers, $d_{model}=768$, $d_{ffn}=2048$</td>
-            <td>Fits in ~500MB VRAM on Apple Silicon Metal (MPS)</td>
-          </tr>
-          <tr>
-            <td><strong>Attention</strong></td>
-            <td>12 Q-heads, 4 KV-heads (GQA 3:1) + QK-Norm</td>
-            <td>3x KV-Cache memory compression + stable training</td>
-          </tr>
-          <tr>
-            <td><strong>SWA Pattern</strong></td>
-            <td>3 SWA (2K window) : 1 Global Anchor</td>
-            <td>60% KV-Cache reduction in extended 16K context</td>
-          </tr>
-          <tr>
-            <td><strong>Multimodal</strong></td>
-            <td>49 vision tokens (2x2 ViT) + 50 audio tokens</td>
-            <td>Under 100 tokens overhead for instant multimodal prefill</td>
-          </tr>
-        </tbody>
-      </table>
+      <!-- MTP Head -->
+      <div class="col">
+        <div class="box">
+          MTP Speculative Module (1-Layer Transformer)
+          <div class="shape">Hidden(t) + Embed(t+1) → Linear(768 → 49,164)</div>
+        </div>
+        <div class="line-v"></div>
+        <div class="box input">Speculative Token Logits: P(t+2)</div>
+      </div>
     </div>
   </div>
 </body>
