@@ -46,14 +46,14 @@ python scripts/infer/multimodal.py --checkpoint checkpoints/multimodal/unified/s
 
 ## 3. Benchmarking
 
-`scripts/bench/benchmark.py` measures prefill throughput, autoregressive decoding speed, and active VRAM usage on Apple Silicon (MPS).
+`tests/benchmark.py` measures prefill throughput, autoregressive decoding speed, and active VRAM usage on Apple Silicon (MPS).
 
 ```bash
 # Standard benchmark (prompt: 128 tokens, generation: 64 tokens)
-python scripts/bench/benchmark.py --prompt_len 128 --gen_len 64
+python tests/benchmark.py --prompt_len 128 --gen_len 64
 
 # Long-context benchmark
-python scripts/bench/benchmark.py --prompt_len 512 --gen_len 128
+python tests/benchmark.py --prompt_len 512 --gen_len 128
 ```
 
 ---
