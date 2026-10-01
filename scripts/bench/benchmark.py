@@ -6,7 +6,7 @@ import sys
 import time
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
@@ -35,18 +35,20 @@ def benchmark(batch_size: int = 1, prompt_len: int = 128, gen_len: int = 64, num
 
     # Warmup
     dummy_input = torch.randint(0, config.vocab_size, (batch_size, 32), device=device)
+    dummy_mask = torch.ones_like(dummy_input)
     with torch.no_grad():
         for _ in range(3):
-            _ = model.generate(dummy_input, max_new_tokens=5, do_sample=False)
+            _ = model.generate(dummy_input, attention_mask=dummy_mask, max_new_tokens=5, do_sample=False)
 
     # 1. Prefill Latency Test
     prompt = torch.randint(0, config.vocab_size, (batch_size, prompt_len), device=device)
+    prompt_mask = torch.ones_like(prompt)
     if device.type == "mps":
         torch.mps.synchronize()
     t0 = time.perf_counter()
     with torch.no_grad():
         for _ in range(5):
-            _ = model(input_ids=prompt)
+            _ = model(input_ids=prompt, attention_mask=prompt_mask)
     if device.type == "mps":
         torch.mps.synchronize()
     prefill_time = (time.perf_counter() - t0) / 5
@@ -58,7 +60,7 @@ def benchmark(batch_size: int = 1, prompt_len: int = 128, gen_len: int = 64, num
         torch.mps.synchronize()
     t0 = time.perf_counter()
     with torch.no_grad():
-        out = model.generate(prompt, max_new_tokens=gen_len, do_sample=False)
+        out = model.generate(prompt, attention_mask=prompt_mask, max_new_tokens=gen_len, do_sample=False)
     if device.type == "mps":
         torch.mps.synchronize()
     decode_time = time.perf_counter() - t0

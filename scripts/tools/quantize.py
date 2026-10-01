@@ -15,7 +15,7 @@ import sys
 import time
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from model import JerboaConfig, JerboaForCausalLM, get_default_tokenizer
 
@@ -69,6 +69,8 @@ def quantize_model(
 
     elif precision == "int8":
         # Dynamic quantization on linear layers (weights to int8)
+        if "qnnpack" in torch.backends.quantized.supported_engines:
+            torch.backends.quantized.engine = "qnnpack"
         converted_model = torch.ao.quantization.quantize_dynamic(
             orig_model,
             {torch.nn.Linear},

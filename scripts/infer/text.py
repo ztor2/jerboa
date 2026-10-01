@@ -12,7 +12,7 @@ import sys
 import torch
 from transformers import TextStreamer
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from model import JerboaConfig, JerboaForCausalLM, get_default_tokenizer
 
@@ -65,9 +65,12 @@ def generate_single_prompt(
 
     streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if stream else None
 
+    attention_mask = torch.ones_like(input_ids)
+
     with torch.no_grad():
         output_ids = model.generate(
             input_ids,
+            attention_mask=attention_mask,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
@@ -110,11 +113,13 @@ def interactive_chat_repl(
 
             conversation_history += f"<|im_start|>user\n{user_input}<|im_end|>\n<|im_start|>assistant\n"
             input_ids = tokenizer.encode(conversation_history, return_tensors="pt").to(device)
+            attention_mask = torch.ones_like(input_ids)
 
             print("Jerboa: ", end="", flush=True)
             with torch.no_grad():
                 output_ids = model.generate(
                     input_ids,
+                    attention_mask=attention_mask,
                     max_new_tokens=max_new_tokens,
                     temperature=temperature,
                     top_p=top_p,

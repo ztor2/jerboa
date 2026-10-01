@@ -11,7 +11,7 @@ import os
 import sys
 import torch
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from model import JerboaConfig, JerboaVLForConditionalGeneration, get_default_tokenizer
 

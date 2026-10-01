@@ -51,19 +51,19 @@ Stream open-source datasets and format them into target schemas:
 
 ```bash
 # Pre-training: FineWeb-Edu educational subset (score >= 3)
-python scripts/prepare_data.py --stage pretrain --source fineweb-edu --samples 1000
+python scripts/data/prepare.py --stage pretrain --source fineweb-edu --samples 1000
 
 # SFT: Multi-turn instruction dialogues (UltraChat)
-python scripts/prepare_data.py --stage sft --samples 200
+python scripts/data/prepare.py --stage sft --samples 200
 
 # DPO: Human pairwise preferences (UltraFeedback)
-python scripts/prepare_data.py --stage dpo --samples 200
+python scripts/data/prepare.py --stage dpo --samples 200
 
 # GRPO: Verifiable math reasoning (GSM8K)
-python scripts/prepare_data.py --stage grpo --samples 200
+python scripts/data/prepare.py --stage grpo --samples 200
 
 # Prepare all baseline datasets at once
-python scripts/prepare_data.py --stage all
+python scripts/data/prepare.py --stage all
 ```
 
 ---
@@ -97,7 +97,7 @@ python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"
 python pipeline/pretrain.py --resume auto --chunks 5
 
 # View training lineage ledger & loss curves locally
-python scripts/view_history.py
+python scripts/tools/history.py
 ```
 
 ### ② Supervised Fine-Tuning (`pipeline/sft.py`)
