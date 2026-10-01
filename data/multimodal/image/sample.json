@@ -1,0 +1,16 @@
+[
+  {
+    "id": "img_001",
+    "image": "data/multimodal/image/sample.jpg",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<|image|>\nDescribe this scene in detail."
+      },
+      {
+        "from": "gpt",
+        "value": "A serene landscape with clear skies and green hills."
+      }
+    ]
+  }
+]

@@ -3,6 +3,9 @@ checkpoints/
 __pycache__/
 *.pyc
 .DS_Store
-data/
+data/**
+!data/**/
+!data/**/sample.*
+!data/**/fineweb_edu_sample.txt
 .env
 wandb/

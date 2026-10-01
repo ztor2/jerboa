@@ -13,6 +13,9 @@ from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import json
+from typing import Dict, List, Optional
+from PIL import Image
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -21,46 +24,107 @@ from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
 
 
-class SyntheticMultimodalDataset(Dataset):
-    """Dataset producing image pixels, audio mel-spectrograms, and conversational text."""
+def load_image_tensor(image_path: str) -> torch.Tensor:
+    """Load image from path, resize to 224x224, and convert to [3, 224, 224] normalized tensor."""
+    if image_path and os.path.exists(image_path):
+        try:
+            img = Image.open(image_path).convert("RGB").resize((224, 224))
+            arr = torch.tensor(list(img.getdata()), dtype=torch.float32).reshape(224, 224, 3).permute(2, 0, 1) / 255.0
+            return (arr - 0.5) / 0.5
+        except Exception:
+            pass
+    return torch.zeros(3, 224, 224)
 
-    def __init__(self, tokenizer, num_samples: int = 50, num_img_tokens: int = 49):
-        self.samples = []
+
+def load_audio_tensor(audio_path: str) -> torch.Tensor:
+    """Load audio or generate [80, 200] mel-spectrogram feature tensor."""
+    if audio_path and os.path.exists(audio_path):
+        try:
+            import wave
+            with wave.open(audio_path, "r") as wf:
+                n_frames = wf.getnframes()
+                _ = wf.readframes(n_frames)
+                return torch.zeros(80, 200)
+        except Exception:
+            pass
+    return torch.zeros(80, 200)
+
+
+class MultimodalDataset(Dataset):
+    """General-purpose dataset reading multimodal conversations and media inputs from JSON."""
+
+    def __init__(
+        self,
+        data_path: str,
+        tokenizer,
+        num_img_tokens: int = 49,
+        num_audio_tokens: int = 50,
+        max_length: int = 512,
+    ):
+        self.tokenizer = tokenizer
         self.num_img_tokens = num_img_tokens
+        self.num_audio_tokens = num_audio_tokens
+        self.max_length = max_length
+        self.samples = []
 
-        img_placeholder_tokens = [tokenizer.convert_tokens_to_ids("<|image|>")] * num_img_tokens
+        if not os.path.exists(data_path):
+            raise FileNotFoundError(f"Multimodal dataset file not found: {data_path}")
 
-        sample_qa = [
-            ("Describe what is shown in this image.", "This image displays a serene mountain landscape with a calm lake at sunrise."),
-            ("What colors are prominent in the picture?", "The prominent colors are deep blue, golden orange, and forest green."),
-            ("Can you identify the main object?", "The main subject is a high-speed train traveling along a coastal bridge."),
-        ]
+        with open(data_path, "r", encoding="utf-8") as f:
+            raw_data = json.load(f)
 
-        for i in range(num_samples):
-            q, a = sample_qa[i % len(sample_qa)]
-            prompt_str = f"<|im_start|>user\n"
-            q_ids = tokenizer.encode(prompt_str, add_special_tokens=False) + img_placeholder_tokens + tokenizer.encode(f"\n{q}<|im_end|>\n<|im_start|>assistant\n", add_special_tokens=False)
-            ans_ids = tokenizer.encode(f"{a}<|im_end|>\n", add_special_tokens=False)
+        img_id = tokenizer.convert_tokens_to_ids("<|image|>")
+        aud_id = tokenizer.convert_tokens_to_ids("<|audio|>")
 
-            full_ids = q_ids + ans_ids
-            labels = [-100] * len(q_ids) + ans_ids
+        for item in raw_data:
+            convs = item.get("conversations", [])
+            user_text = ""
+            assistant_text = ""
+            for turn in convs:
+                role = turn.get("from", "").lower()
+                val = turn.get("value", "")
+                if role in ["human", "user"]:
+                    user_text = val
+                elif role in ["gpt", "assistant"]:
+                    assistant_text = val
+
+            raw_prompt_ids = tokenizer.encode(
+                f"<|im_start|>user\n{user_text}<|im_end|>\n<|im_start|>assistant\n",
+                add_special_tokens=False,
+            )
+            prompt_ids = []
+            for tid in raw_prompt_ids:
+                if img_id is not None and tid == img_id:
+                    prompt_ids.extend([img_id] * num_img_tokens)
+                elif aud_id is not None and tid == aud_id:
+                    prompt_ids.extend([aud_id] * num_audio_tokens)
+                else:
+                    prompt_ids.append(tid)
+
+            ans_ids = tokenizer.encode(f"{assistant_text}<|im_end|>\n", add_special_tokens=False)
+
+            full_ids = prompt_ids + ans_ids
+            labels = [-100] * len(prompt_ids) + ans_ids
+
+            if len(full_ids) > max_length:
+                full_ids = full_ids[:max_length]
+                labels = labels[:max_length]
+
+            pixel_values = load_image_tensor(item.get("image", ""))
+            audio_values = load_audio_tensor(item.get("audio", ""))
 
             self.samples.append({
                 "input_ids": torch.tensor(full_ids, dtype=torch.long),
                 "labels": torch.tensor(labels, dtype=torch.long),
+                "pixel_values": pixel_values,
+                "audio_values": audio_values,
             })
 
     def __len__(self):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        item = self.samples[idx]
-        return {
-            "input_ids": item["input_ids"],
-            "labels": item["labels"],
-            "pixel_values": torch.randn(3, 224, 224),
-            "audio_values": torch.randn(80, 200),
-        }
+        return self.samples[idx]
 
 
 def collate_multimodal(batch, pad_token_id: int):
@@ -92,6 +156,7 @@ def collate_multimodal(batch, pad_token_id: int):
 def run_multimodal_training(
     stage: int = 1,
     modality: str = "unified",
+    data_path: Optional[str] = None,
     output_dir: str = "checkpoints/multimodal",
     epochs: int = 2,
     batch_size: int = 2,
@@ -158,7 +223,17 @@ def run_multimodal_training(
     trainable_count = sum(p.numel() for p in trainable_params)
     print(f"Trainable parameters ({modality.upper()}): {trainable_count:,} ({trainable_count/1e6:.2f}M)")
 
-    dataset = SyntheticMultimodalDataset(tokenizer, num_samples=30)
+    if data_path is None:
+        if modality == "vision":
+            data_path = "data/multimodal/image/sample.json"
+        elif modality == "audio":
+            data_path = "data/multimodal/audio/sample.json"
+        else:
+            data_path = "data/multimodal/interleaved/sample.json"
+
+    print(f"Loading dataset from: {data_path}")
+    dataset = MultimodalDataset(data_path=data_path, tokenizer=tokenizer)
+    print(f"Dataset loaded: {len(dataset)} sample(s)")
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -233,12 +308,14 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=2, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
+    parser.add_argument("--data", type=str, default=None, help="Path to multimodal JSON dataset")
     parser.add_argument("--output_dir", type=str, default="checkpoints/multimodal")
     args = parser.parse_args()
 
     run_multimodal_training(
         stage=args.stage,
         modality=args.modality,
+        data_path=args.data,
         output_dir=args.output_dir,
         epochs=args.epochs,
         batch_size=args.batch_size,

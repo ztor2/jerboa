@@ -1,0 +1,17 @@
+[
+  {
+    "id": "intl_001",
+    "image": "data/multimodal/image/sample.jpg",
+    "audio": "data/multimodal/audio/sample.wav",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<|image|><|audio|>\nHow does the audio relate to the visual scene?"
+      },
+      {
+        "from": "gpt",
+        "value": "The visual cues show ocean waves, corresponding to the crashing wave sounds."
+      }
+    ]
+  }
+]

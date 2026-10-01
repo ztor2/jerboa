@@ -1,0 +1,16 @@
+[
+  {
+    "id": "aud_001",
+    "audio": "data/multimodal/audio/sample.wav",
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<|audio|>\nTranscribe and analyze this sound clip."
+      },
+      {
+        "from": "gpt",
+        "value": "Ambient birds chirping in a quiet forest environment."
+      }
+    ]
+  }
+]

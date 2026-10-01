@@ -1,0 +1,17 @@
+[
+  {
+    "id": "vid_001",
+    "video": "data/multimodal/video/sample.mp4",
+    "num_frames": 8,
+    "conversations": [
+      {
+        "from": "human",
+        "value": "<|image|><|image|><|image|><|image|>\nSummarize the action in this video clip."
+      },
+      {
+        "from": "gpt",
+        "value": "A high-speed train accelerates out of the station across the bridge."
+      }
+    ]
+  }
+]

@@ -149,6 +149,9 @@ python pipeline/train_multimodal.py --modality audio --epochs 2
 # Unified: Stage 1 Projector warmup & Stage 2 Full tuning
 python pipeline/train_multimodal.py --stage 1 --epochs 2
 python pipeline/train_multimodal.py --stage 2 --epochs 2
+
+# Custom dataset training
+python pipeline/train_multimodal.py --data path/to/dataset.json --modality vision
 ```
 
 ---
