@@ -21,7 +21,7 @@ def load_model_and_tokenizer(model_path: str, device: torch.device):
     try:
         print(f"Loading checkpoint from '{model_path}' (local or Hugging Face Hub)...")
         tokenizer = get_default_tokenizer(model_path)
-        model = JerboaForCausalLM.from_pretrained(model_path)
+        model = JerboaForCausalLM.from_pretrained(model_path, trust_remote_code=True)
     except Exception as e:
         print(f"Notice: Could not load from '{model_path}' ({e}), initializing base JerboaLM...")
         tokenizer = get_default_tokenizer()

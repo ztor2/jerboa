@@ -99,14 +99,15 @@ def build_bpe_tokenizer(
 def get_default_tokenizer(
     tokenizer_name_or_path: str = "HuggingFaceTB/SmolLM-135M",
     save_directory: Optional[str] = None,
+    trust_remote_code: bool = True,
 ) -> PreTrainedTokenizerFast:
     """Load an existing fast tokenizer or download a modern lightweight tokenizer."""
     try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, trust_remote_code=trust_remote_code)
     except Exception:
         # Fallback to local if exists or gpt2
         fallback = "gpt2"
-        tokenizer = AutoTokenizer.from_pretrained(fallback)
+        tokenizer = AutoTokenizer.from_pretrained(fallback, trust_remote_code=trust_remote_code)
 
     # Ensure special tokens exist
     special_tokens_dict = {}

@@ -166,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, default="Describe what is in this image and audio.", help="User instruction")
     parser.add_argument("--image", type=str, default=None, help="Path to image file")
     parser.add_argument("--audio", type=str, default=None, help="Path to audio file")
-    default_ckpt = "checkpoints/multimodal/stage_2.pt" if os.path.exists("checkpoints/multimodal/stage_2.pt") else (
+    default_ckpt = "checkpoints/multimodal/unified/stage_1.pt" if os.path.exists("checkpoints/multimodal/unified/stage_1.pt") else (
         "checkpoints/multimodal/stage_1.pt" if os.path.exists("checkpoints/multimodal/stage_1.pt") else None
     )
     parser.add_argument("--checkpoint", type=str, default=default_ckpt, help="Model weights path")
