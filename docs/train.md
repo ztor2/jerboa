@@ -101,6 +101,7 @@ flowchart LR
 ```
 
 ### ① Pre-training (`pipeline/pretrain.py`)
+- **Curriculum & Data Strategy**: See [docs/pretrain_data_plan.md](file:///Users/jc/jerboa/docs/pretrain_data_plan.md) for complete token scaling estimates, dataset inventory, and two-stage curriculum recipes.
 - **Rolling-Buffer Mode**: Streams chunks (e.g., 500 docs), calculates SHA-256 hashes, logs token counts, trains on MPS, and removes raw text to maintain near-zero disk overhead.
 - **In-Memory / File Modes**: `--mode stream` (0 MB disk) or `--text_file <path>`.
 
