@@ -59,6 +59,28 @@ pie title JerboaLM 138M Pre-training Data Mixture
 | **Code & Logic** | **Python-Edu & The Stack Smol** | `HuggingFaceTB/smollm-corpus` (`python-edu`) | **20%** | Educational Python scripts, docstrings, unit tests, and algorithmic solutions. Trains causal dependencies and logic. |
 | **STEM & Knowledge** | **FineMath + Wikipedia** | `HuggingFaceFW/finemath` + `wikimedia/wikipedia` | **10%** | Multi-step mathematical deductions, LaTeX expressions, and encyclopedic factual grounding. |
 
+### Latest Ecosystem Context & SOTA Model Provenance
+
+The datasets selected above directly mirror the **2nd-generation SLM recipe (SmolLM2, DCLM, Llama-3-Edu)** developed in late 2024:
+
+```
+[Generation 1: 2022-2023]                [Generation 2: Late 2024 - Present (Jerboa Target)]
+Raw Common Crawl / C4               -->  FineWeb-Edu (Llama-3-70B Classifier, Score >= 3)
+The Pile / RefinedWeb               -->  DCLM (Apple/UW DataComp-LM, ICML 2024 Best Paper)
+Raw GitHub Scrapes (The Stack v1)   -->  Stack-Edu & Python-Edu (Educational Filtering)
+Basic Math Forums (MathOverflow)    -->  FineMath-4plus (Multi-step Reasoning & Proofs)
+Hand-written Instruction Sets       -->  Cosmopedia v2 (Synthetic High-Density Knowledge)
+```
+
+1. **FineWeb-Edu (Hugging Face, 2024)**:
+   - Replaces older raw dumps (C4, RefinedWeb). Used in cutting-edge open models because it scores web text via a synthetic educator rubric.
+2. **FineMath (Hugging Face, late 2024)**:
+   - Created specifically during the SmolLM2 project to resolve the historical weakness of small models in mathematical reasoning (`finemath-4plus`).
+3. **Stack-Edu & Python-Edu (HuggingFaceTB)**:
+   - Successor to generic GitHub dumps; uses educational classifier filters on StarCoder2/Stack v2. For 138M parameter models, Python-first logic yields the highest parameter efficiency.
+4. **Cosmopedia v2**:
+   - The upgraded v2 release resolves repetitive topic clustering present in v1, producing textbook-grade conceptual continuity.
+
 ---
 
 ## 4. Multi-Stage Curriculum Progression
