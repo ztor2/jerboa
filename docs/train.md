@@ -174,15 +174,39 @@ python pipeline/train_multimodal.py --data path/to/dataset.json --modality visio
 
 ---
 
-## 4. Mac Long-Running Training Guide
+## 4. Fault Tolerance & Long-Running Training Guide
 
-To run extended training on Apple Silicon while keeping the lid open for airflow without screen wear or light pollution:
+JerboaLM is engineered with built-in fault tolerance designed for uninterrupted long-running training and graceful interruptions on Apple Silicon (MPS):
+
+### ① Intentional Pause & Resume (Best Practice)
+When you need to pause training to free up RAM/VRAM, shut down the computer, or perform other compute-heavy tasks:
+- **Graceful Pause**: Press `Ctrl + C` in the training terminal.
+  - The signal handler intercepts `SIGINT`, finishes the current step, and atomically flushes model weights, optimizer momentum, and LR scheduler state to an emergency checkpoint (`interrupted_step_XXXX`).
+  - Unified memory / VRAM is 100% reclaimed upon clean exit.
+- **Seamless Resume**:
+  - Run with `--resume auto` or `make sft RESUME=auto` (or `make pretrain RESUME=auto`).
+  - The pipeline automatically detects the latest checkpoint and resumes exact epoch, step, and optimizer momentum without loss spikes.
+
+### ② Periodic Step Checkpointing & Rotation
+- Intermediate checkpoints are automatically stored every $N$ steps (`save_steps`, default: 25-50).
+- Checkpoint rotation (`save_total_limit`, default: 3) retains the most recent $K$ intermediate steps, preventing local disk overflow.
+- Checkpoints contain:
+  - Hugging Face / SafeTensors model weights & tokenizer
+  - `training_state.pt`: `optimizer_state`, `scheduler_state`, `rng_state` (PyTorch & Python seed), and step offsets
+  - `training_state.json`: Human-readable audit log
+
+### ③ Built-in macOS Sleep Guard (`caffeinate`)
+- `pipeline/checkpoint_manager.py` includes a native `SleepGuard` that activates macOS `caffeinate` bound to the training process PID.
+- It prevents display and system idle sleep on Apple Silicon while training is active, eliminating MPS device disconnect crashes (`MPS backend error`).
+- Once training completes or is gracefully paused, sleep assertions are immediately released.
 
 ```bash
-# Prevent system sleep + turn display off immediately + auto-resume training
-(sleep 2 && pmset displaysleepnow) & caffeinate -s python pipeline/pretrain.py --resume auto
-```
+# SFT with auto-resume enabled (via Makefile)
+make sft RESUME=auto
 
-- **`caffeinate -s`**: Inhibits system idle sleep while connected to AC power.
-- **`pmset displaysleepnow`**: Powers off display backlight instantly. Touch trackpad or press any key to wake.
-- **Thermal Tip**: Elevate laptop base 1–2 cm above desk surface to reduce operating temperature by 7–10°C.
+# Pre-training with custom checkpoint retention
+python pipeline/pretrain.py --resume auto --chunks 5
+
+# Overnight training with screen power-off (cool lid open):
+(sleep 2 && pmset displaysleepnow) & make sft RESUME=auto
+```

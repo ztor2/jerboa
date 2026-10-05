@@ -34,6 +34,7 @@ from torch.utils.data import DataLoader, Dataset
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
+from pipeline.checkpoint_manager import CheckpointManager, GracefulInterruptHandler, SleepGuard
 
 DEFAULT_SFT_EXAMPLES = [
     {
@@ -134,6 +135,9 @@ def run_sft(
     batch_size: int = 2,
     lr: float = 2e-4,
     max_length: int = 256,
+    save_steps: int = 50,
+    save_total_limit: int = 3,
+    resume: Optional[str] = None,
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
     wandb_run_name: Optional[str] = None,
@@ -142,13 +146,34 @@ def run_sft(
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'})")
 
+    checkpoint_mgr = CheckpointManager(output_dir=output_dir, max_to_keep=save_total_limit)
+    interrupt_handler = GracefulInterruptHandler()
+    sleep_guard = SleepGuard()
+    sleep_guard.start()
+
+    # Determine resume checkpoint
+    ckpt_to_resume = None
+    if resume:
+        if str(resume).lower() in ("auto", "true", "1"):
+            ckpt_to_resume = checkpoint_mgr.find_latest_checkpoint()
+            if ckpt_to_resume:
+                print(f"[Resume] Detected latest checkpoint: '{ckpt_to_resume}'")
+            else:
+                print(f"[Resume] No existing checkpoint found in '{output_dir}'. Starting fresh.")
+        elif os.path.exists(str(resume)):
+            ckpt_to_resume = str(resume)
+            print(f"[Resume] Resuming from specified path: '{ckpt_to_resume}'")
+        else:
+            print(f"[Resume] Warning: Specified checkpoint '{resume}' does not exist. Starting fresh.")
+
     # 1. Load Tokenizer & Model
+    load_source = ckpt_to_resume if ckpt_to_resume else model_path_or_name
     try:
-        print(f"Loading pretrained model from '{model_path_or_name}' (local or Hugging Face Hub)...")
-        model = JerboaForCausalLM.from_pretrained(model_path_or_name)
-        tokenizer = get_default_tokenizer(model_path_or_name)
+        print(f"Loading model from '{load_source}' (local or Hugging Face Hub)...")
+        model = JerboaForCausalLM.from_pretrained(load_source)
+        tokenizer = get_default_tokenizer(load_source)
     except Exception as e:
-        print(f"Notice: Could not load from '{model_path_or_name}' ({e}), initializing base JerboaLM...")
+        print(f"Notice: Could not load from '{load_source}' ({e}), initializing base JerboaLM...")
         tokenizer = get_default_tokenizer()
         config = JerboaConfig(
             vocab_size=len(tokenizer),
@@ -222,52 +247,127 @@ def run_sft(
     # 3. Optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
+    start_epoch = 1
+    global_step = 0
+    step_in_epoch = 0
+
+    if ckpt_to_resume:
+        state = checkpoint_mgr.restore_state(ckpt_to_resume, optimizer=optimizer)
+        global_step = state.get("step", 0)
+        saved_epoch = state.get("epoch", 1)
+        saved_step_in_epoch = state.get("step_in_epoch", 0)
+        if saved_step_in_epoch >= len(dataloader):
+            start_epoch = saved_epoch + 1
+            step_in_epoch = 0
+        else:
+            start_epoch = saved_epoch
+            step_in_epoch = saved_step_in_epoch
+        print(f"[Resume] Restored state -> Step: {global_step}, Epoch: {start_epoch}, Step in Epoch: {step_in_epoch}")
+
     # 4. Training Loop
     print(f"\n--- Starting Supervised Fine-Tuning ({epochs} Epochs, {len(dataset)} Samples) ---")
     model.train()
     start_time = time.time()
-    step = 0
+    interrupted = False
 
-    for epoch in range(1, epochs + 1):
-        epoch_loss = 0.0
-        for batch in dataloader:
-            input_ids = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-            labels = batch["labels"].to(device)
+    try:
+        for epoch in range(start_epoch, epochs + 1):
+            epoch_loss = 0.0
+            completed_batches = 0
+            for batch_idx, batch in enumerate(dataloader):
+                if epoch == start_epoch and batch_idx < step_in_epoch:
+                    continue
 
-            optimizer.zero_grad()
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
+                input_ids = batch["input_ids"].to(device)
+                attention_mask = batch["attention_mask"].to(device)
+                labels = batch["labels"].to(device)
 
-            step_loss = loss.item()
-            epoch_loss += step_loss
-            step += 1
+                optimizer.zero_grad()
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                loss = outputs.loss
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
 
-            if step % 5 == 0:
-                print(f"Epoch {epoch}/{epochs} | Step {step:3d} | Loss: {step_loss:.4f}")
+                step_loss = loss.item()
+                epoch_loss += step_loss
+                completed_batches += 1
+                global_step += 1
 
+                if global_step % 5 == 0:
+                    print(f"Epoch {epoch}/{epochs} | Step {global_step:3d} (Batch {batch_idx + 1}/{len(dataloader)}) | Loss: {step_loss:.4f}")
+
+                if use_wandb:
+                    wandb.log({
+                        "train/loss": step_loss,
+                        "train/epoch": epoch,
+                        "global_step": global_step,
+                    })
+
+                # Periodic Step Checkpoint
+                if save_steps > 0 and global_step % save_steps == 0:
+                    saved_path = checkpoint_mgr.save(
+                        model=model,
+                        tokenizer=tokenizer,
+                        optimizer=optimizer,
+                        step=global_step,
+                        epoch=epoch,
+                        step_in_epoch=batch_idx + 1,
+                        metrics={"loss": step_loss},
+                    )
+                    print(f"[Checkpoint] Saved step checkpoint: {saved_path}")
+
+                # Interrupt check (Ctrl+C / SIGINT / SIGTERM)
+                if interrupt_handler.interrupted:
+                    interrupted = True
+                    print(f"\n[Interrupt] Saving emergency checkpoint at step {global_step} (Epoch {epoch})...")
+                    saved_path = checkpoint_mgr.save(
+                        model=model,
+                        tokenizer=tokenizer,
+                        optimizer=optimizer,
+                        step=global_step,
+                        epoch=epoch,
+                        step_in_epoch=batch_idx + 1,
+                        metrics={"loss": step_loss},
+                        is_interrupted=True,
+                    )
+                    print(f"[Interrupt] Safely saved to: {saved_path}")
+                    print(f"[Interrupt] To resume later, run with: --resume auto (or 'make sft RESUME=auto')")
+                    break
+
+            if interrupted:
+                break
+
+            avg_loss = epoch_loss / max(completed_batches, 1)
+            print(f"=== Epoch {epoch} Complete | Average Loss: {avg_loss:.4f} ===")
             if use_wandb:
                 wandb.log({
-                    "train/loss": step_loss,
-                    "train/epoch": epoch,
-                    "global_step": step,
+                    "train/avg_epoch_loss": avg_loss,
+                    "epoch": epoch,
                 })
 
-        avg_loss = epoch_loss / len(dataloader)
-        print(f"=== Epoch {epoch} Complete | Average Loss: {avg_loss:.4f} ===")
-        if use_wandb:
-            wandb.log({
-                "train/avg_epoch_loss": avg_loss,
-                "epoch": epoch,
-            })
+            # Save epoch checkpoint
+            checkpoint_mgr.save(
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=optimizer,
+                step=global_step,
+                epoch=epoch,
+                step_in_epoch=len(dataloader),
+                metrics={"loss": avg_loss},
+                tag=f"epoch_{epoch:03d}",
+            )
+            step_in_epoch = 0
+    finally:
+        sleep_guard.stop()
 
     if use_wandb:
         wandb.finish()
 
-    # 5. Save Model
+    if interrupted:
+        return None
+
+    # 5. Save Final Model
     final_path = os.path.join(output_dir, "model")
     model.save_pretrained(final_path)
     tokenizer.save_pretrained(final_path)
@@ -286,6 +386,9 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=2, help="Batch size")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
+    parser.add_argument("--save_steps", type=int, default=50, help="Save intermediate checkpoint every N steps")
+    parser.add_argument("--save_total_limit", type=int, default=3, help="Max number of intermediate step checkpoints to keep")
+    parser.add_argument("--resume", nargs="?", const="auto", default=None, help="Resume training ('auto' or checkpoint path)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/sft")
     parser.add_argument("--data", type=str, default=default_data, help="JSON dataset path")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
@@ -301,6 +404,9 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        save_steps=args.save_steps,
+        save_total_limit=args.save_total_limit,
+        resume=args.resume,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,

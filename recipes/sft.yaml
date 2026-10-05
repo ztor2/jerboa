@@ -6,6 +6,9 @@ epochs: 2
 batch_size: 2
 lr: 2.0e-4
 max_length: 512
+save_steps: 25
+save_total_limit: 3
+resume: auto
 wandb: false
 wandb_project: jerboa
 wandb_run: exp-sft

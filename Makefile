@@ -6,13 +6,16 @@ MODEL ?= checkpoints/$(STAGE)/model
 REPO ?= jerboa
 PRIVATE ?= 0
 DRY_RUN ?= 0
+RESUME ?=
+CAFFEINATE ?= $(shell command -v caffeinate 2>/dev/null)
+RUNNER ?= $(if $(CAFFEINATE),caffeinate -i -s -m,)
 
 help:
 	@echo "======================================================================"
 	@echo "                       JERBOA WORKFLOW RUNNER                         "
 	@echo "======================================================================"
-	@echo "  make pretrain    - Run Rolling-Buffer Pre-training (recipes/pretrain.yaml)"
-	@echo "  make sft         - Run Supervised Fine-Tuning (recipes/sft.yaml)"
+	@echo "  make pretrain    - Run Rolling-Buffer Pre-training (RESUME=auto supported)"
+	@echo "  make sft         - Run Supervised Fine-Tuning (RESUME=auto supported)"
 	@echo "  make dpo         - Run Direct Preference Optimization (recipes/dpo.yaml)"
 	@echo "  make grpo        - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
 	@echo "  make multimodal  - Run Multimodal Alignment (recipes/multimodal.yaml)"
@@ -24,19 +27,19 @@ help:
 	@echo "======================================================================"
 
 pretrain:
-	$(PYTHON) pipeline/pretrain.py --recipe recipes/pretrain.yaml
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe recipes/pretrain.yaml $(if $(RESUME),--resume $(RESUME),)
 
 sft:
-	$(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml
+	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)
 
 dpo:
-	$(PYTHON) pipeline/rl_dpo.py --recipe recipes/dpo.yaml
+	$(RUNNER) $(PYTHON) pipeline/rl_dpo.py --recipe recipes/dpo.yaml
 
 grpo:
-	$(PYTHON) pipeline/rl_grpo.py --recipe recipes/grpo.yaml
+	$(RUNNER) $(PYTHON) pipeline/rl_grpo.py --recipe recipes/grpo.yaml
 
 multimodal:
-	$(PYTHON) pipeline/train_multimodal.py --recipe recipes/multimodal.yaml
+	$(RUNNER) $(PYTHON) pipeline/train_multimodal.py --recipe recipes/multimodal.yaml
 
 bench:
 	$(PYTHON) tests/benchmark.py

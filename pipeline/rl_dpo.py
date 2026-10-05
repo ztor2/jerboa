@@ -21,6 +21,7 @@ from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard
 
 DEFAULT_DPO_PAIRS = [
     {
@@ -237,6 +238,10 @@ def run_dpo(
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr)
 
     # 4. DPO Training Loop
+    sleep_guard = SleepGuard()
+    sleep_guard.start()
+    interrupt_handler = GracefulInterruptHandler()
+
     stage_desc = "Multimodal DPO (Anti-Hallucination)" if multimodal else "DPO"
     print(f"\n--- Starting {stage_desc} (Beta={beta}, Steps={steps}) ---")
     policy_model.train()
@@ -244,68 +249,84 @@ def run_dpo(
     start_time = time.time()
     data_iter = iter(dataloader)
 
-    while step < steps:
-        try:
-            batch = next(data_iter)
-        except StopIteration:
-            data_iter = iter(dataloader)
-            batch = next(data_iter)
+    try:
+        while step < steps:
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                data_iter = iter(dataloader)
+                batch = next(data_iter)
 
-        c_ids = batch["chosen_ids"].to(device)
-        c_mask = batch["chosen_mask"].to(device)
-        c_lbls = batch["chosen_labels"].to(device)
+            c_ids = batch["chosen_ids"].to(device)
+            c_mask = batch["chosen_mask"].to(device)
+            c_lbls = batch["chosen_labels"].to(device)
 
-        r_ids = batch["rejected_ids"].to(device)
-        r_mask = batch["rejected_mask"].to(device)
-        r_lbls = batch["rejected_labels"].to(device)
+            r_ids = batch["rejected_ids"].to(device)
+            r_mask = batch["rejected_mask"].to(device)
+            r_lbls = batch["rejected_labels"].to(device)
 
-        pixel_values = batch["pixel_values"].to(device) if multimodal and "pixel_values" in batch else None
+            pixel_values = batch["pixel_values"].to(device) if multimodal and "pixel_values" in batch else None
 
-        # Policy logprobs
-        pi_chosen_logps = compute_log_probs(policy_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
-        pi_rejected_logps = compute_log_probs(policy_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
+            # Policy logprobs
+            pi_chosen_logps = compute_log_probs(policy_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
+            pi_rejected_logps = compute_log_probs(policy_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
 
-        # Reference logprobs
-        with torch.no_grad():
-            ref_chosen_logps = compute_log_probs(ref_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
-            ref_rejected_logps = compute_log_probs(ref_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
+            # Reference logprobs
+            with torch.no_grad():
+                ref_chosen_logps = compute_log_probs(ref_model, c_ids, c_mask, c_lbls, pixel_values=pixel_values)
+                ref_rejected_logps = compute_log_probs(ref_model, r_ids, r_mask, r_lbls, pixel_values=pixel_values)
 
-        # DPO Bradley-Terry Loss: -log(sigmoid(beta * (pi_diff - ref_diff)))
-        pi_diff = pi_chosen_logps - pi_rejected_logps
-        ref_diff = ref_chosen_logps - ref_rejected_logps
-        logits = beta * (pi_diff - ref_diff)
-        dpo_loss = -F.logsigmoid(logits).mean()
+            # DPO Bradley-Terry Loss: -log(sigmoid(beta * (pi_diff - ref_diff)))
+            pi_diff = pi_chosen_logps - pi_rejected_logps
+            ref_diff = ref_chosen_logps - ref_rejected_logps
+            logits = beta * (pi_diff - ref_diff)
+            dpo_loss = -F.logsigmoid(logits).mean()
 
-        # Compute implicit reward margins
-        chosen_rewards = (beta * (pi_chosen_logps - ref_chosen_logps)).detach()
-        rejected_rewards = (beta * (pi_rejected_logps - ref_rejected_logps)).detach()
-        reward_margin = (chosen_rewards - rejected_rewards).mean().item()
+            # Compute implicit reward margins
+            chosen_rewards = (beta * (pi_chosen_logps - ref_chosen_logps)).detach()
+            rejected_rewards = (beta * (pi_rejected_logps - ref_rejected_logps)).detach()
+            reward_margin = (chosen_rewards - rejected_rewards).mean().item()
 
-        optimizer.zero_grad()
-        dpo_loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_model.parameters(), 1.0)
-        optimizer.step()
+            optimizer.zero_grad()
+            dpo_loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy_model.parameters(), 1.0)
+            optimizer.step()
 
-        step += 1
-        if step % 5 == 0 or step == steps:
-            print(
-                f"DPO Step {step:3d}/{steps} | "
-                f"Loss: {dpo_loss.item():.4f} | "
-                f"Reward Margin: {reward_margin:+.4f} | "
-                f"Accuracy: {(logits > 0).float().mean().item() * 100:.1f}%"
-            )
+            step += 1
+            if step % 5 == 0 or step == steps:
+                print(
+                    f"DPO Step {step:3d}/{steps} | "
+                    f"Loss: {dpo_loss.item():.4f} | "
+                    f"Reward Margin: {reward_margin:+.4f} | "
+                    f"Accuracy: {(logits > 0).float().mean().item() * 100:.1f}%"
+                )
 
-    # 5. Save Final DPO Model
-    final_path = os.path.join(output_dir, "model")
-    os.makedirs(final_path, exist_ok=True)
-    if multimodal:
-        torch.save(policy_model.state_dict(), os.path.join(final_path, "multimodal_dpo.pt"))
-        print(f"\nMultimodal DPO alignment finished in {time.time() - start_time:.2f}s! Saved weights to {final_path}/multimodal_dpo.pt")
-    else:
-        policy_model.save_pretrained(final_path)
-        tokenizer.save_pretrained(final_path)
-        print(f"\nDPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
-    return final_path
+            # Graceful Interrupt Handling
+            if interrupt_handler.interrupted:
+                print(f"\n[Interrupt] Saving emergency DPO model at step {step}...")
+                interrupted_path = os.path.join(output_dir, f"interrupted_step_{step:04d}")
+                os.makedirs(interrupted_path, exist_ok=True)
+                if multimodal:
+                    torch.save(policy_model.state_dict(), os.path.join(interrupted_path, "multimodal_dpo.pt"))
+                else:
+                    policy_model.save_pretrained(interrupted_path)
+                    tokenizer.save_pretrained(interrupted_path)
+                print(f"[Interrupt] Safely saved to {interrupted_path}. DPO paused.")
+                return interrupted_path
+
+        # 5. Save Final DPO Model
+        final_path = os.path.join(output_dir, "model")
+        os.makedirs(final_path, exist_ok=True)
+        if multimodal:
+            torch.save(policy_model.state_dict(), os.path.join(final_path, "multimodal_dpo.pt"))
+            print(f"\nMultimodal DPO alignment finished in {time.time() - start_time:.2f}s! Saved weights to {final_path}/multimodal_dpo.pt")
+        else:
+            policy_model.save_pretrained(final_path)
+            tokenizer.save_pretrained(final_path)
+            print(f"\nDPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
+        return final_path
+    finally:
+        sleep_guard.stop()
 
 
 if __name__ == "__main__":

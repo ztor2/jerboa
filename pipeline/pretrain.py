@@ -48,6 +48,7 @@ from transformers import get_cosine_schedule_with_warmup
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard
 
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
@@ -239,6 +240,10 @@ def run_pretrain(
 
     tokenizer = get_default_tokenizer()
 
+    sleep_guard = SleepGuard()
+    sleep_guard.start()
+    interrupt_handler = GracefulInterruptHandler()
+
     # 1. Checkpoint resumption or model initialization
     start_chunk = 1
     stream_cursor = 0
@@ -247,6 +252,7 @@ def run_pretrain(
 
     state_file = os.path.join(output_dir, "latest_state.json")
     resume_path = None
+    resume_dir = None
 
     if resume:
         if resume == "auto" and os.path.exists(state_file):
@@ -262,8 +268,10 @@ def run_pretrain(
             last_ckpt = os.path.join(output_dir, "steps", st.get("last_completed_chunk", ""))
             if os.path.exists(last_ckpt):
                 model = JerboaForCausalLM.from_pretrained(last_ckpt)
+                resume_dir = last_ckpt
             else:
                 model = JerboaForCausalLM.from_pretrained(os.path.join(output_dir, "model"))
+                resume_dir = os.path.join(output_dir, "model")
             start_chunk = st.get("next_chunk_idx", 1)
             stream_cursor = st.get("stream_cursor", 0)
             cumulative_tokens = st.get("cumulative_tokens", 0)
@@ -272,6 +280,7 @@ def run_pretrain(
         else:
             print(f"Loading weights from checkpoint '{resume_path}'...")
             model = JerboaForCausalLM.from_pretrained(resume_path)
+            resume_dir = resume_path
             ckpt_st_path = os.path.join(resume_path, "training_state.json")
             if os.path.exists(ckpt_st_path):
                 with open(ckpt_st_path, "r", encoding="utf-8") as f:
@@ -330,6 +339,24 @@ def run_pretrain(
             total_steps=total_chunks * steps_per_chunk,
             warmup_steps=10,
         )
+
+        # Restore optimizer/scheduler state if available
+        state_pt_file = None
+        if resume_dir and os.path.exists(os.path.join(resume_dir, "training_state.pt")):
+            state_pt_file = os.path.join(resume_dir, "training_state.pt")
+        elif os.path.exists(os.path.join(output_dir, "latest_state.pt")):
+            state_pt_file = os.path.join(output_dir, "latest_state.pt")
+
+        if state_pt_file:
+            try:
+                st_pt = torch.load(state_pt_file, map_location="cpu")
+                if "optimizer_state" in st_pt:
+                    optimizer.load_state_dict(st_pt["optimizer_state"])
+                if "scheduler_state" in st_pt:
+                    scheduler.load_state_dict(st_pt["scheduler_state"])
+                print(f"[Resume] Successfully restored optimizer momentum and scheduler states from '{state_pt_file}'")
+            except Exception as e:
+                print(f"[Resume] Notice: Could not restore optimizer/scheduler state: {e}")
 
         temp_chunk_path = "data/ephemeral_chunk.txt"
 
@@ -406,6 +433,45 @@ def run_pretrain(
                             "global_step": global_step,
                         })
 
+                # Graceful Interrupt Handling
+                if interrupt_handler.interrupted:
+                    print(f"\n[Interrupt] Saving emergency pretrain checkpoint for {chunk_name} at step {step_in_chunk + 1}...")
+                    interrupted_dir = os.path.join(output_dir, "steps", f"interrupted_{chunk_name}")
+                    os.makedirs(interrupted_dir, exist_ok=True)
+                    model.save_pretrained(interrupted_dir)
+                    tokenizer.save_pretrained(interrupted_dir)
+                    cur_tokens = cumulative_tokens + int((step_in_chunk / max(steps_per_chunk, 1)) * chunk_tokens)
+                    training_state = {
+                        "last_completed_chunk": f"interrupted_{chunk_name}",
+                        "next_chunk_idx": chunk_idx,
+                        "global_step": global_step,
+                        "stream_cursor": stream_cursor,
+                        "cumulative_tokens": cur_tokens,
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "is_interrupted": True,
+                    }
+                    with open(os.path.join(interrupted_dir, "training_state.json"), "w", encoding="utf-8") as f:
+                        json.dump(training_state, f, indent=2)
+                    with open(state_file, "w", encoding="utf-8") as f:
+                        json.dump(training_state, f, indent=2)
+
+                    pt_state = {
+                        "optimizer_state": optimizer.state_dict(),
+                        "scheduler_state": scheduler.state_dict(),
+                        "global_step": global_step,
+                        "chunk_idx": chunk_idx,
+                        "stream_cursor": stream_cursor,
+                        "cumulative_tokens": cur_tokens,
+                    }
+                    torch.save(pt_state, os.path.join(interrupted_dir, "training_state.pt"))
+                    torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
+                    print(f"[Interrupt] Safely saved to '{interrupted_dir}'. Pre-training paused.")
+                    print(f"[Interrupt] Resume anytime with: python pipeline/pretrain.py --resume auto")
+                    if use_wandb:
+                        wandb.finish()
+                    sleep_guard.stop()
+                    return interrupted_dir
+
                 step_in_chunk += 1
 
             cumulative_tokens += chunk_tokens
@@ -443,6 +509,17 @@ def run_pretrain(
 
             with open(state_file, "w", encoding="utf-8") as f:
                 json.dump(training_state, f, indent=2)
+
+            pt_state = {
+                "optimizer_state": optimizer.state_dict(),
+                "scheduler_state": scheduler.state_dict(),
+                "global_step": global_step,
+                "chunk_idx": chunk_idx + 1,
+                "stream_cursor": stream_cursor,
+                "cumulative_tokens": cumulative_tokens,
+            }
+            torch.save(pt_state, os.path.join(ckpt_dir, "training_state.pt"))
+            torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
 
             log_lineage_record({
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -587,6 +664,8 @@ def run_pretrain(
 
     if use_wandb:
         wandb.finish()
+
+    sleep_guard.stop()
 
     # 3. Base model save to checkpoints/pretrain/model
     final_path = os.path.join(output_dir, "model")

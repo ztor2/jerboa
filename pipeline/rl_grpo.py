@@ -25,6 +25,7 @@ from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard
 
 # Example reasoning prompts for GRPO
 SAMPLE_PROMPTS = [
@@ -182,6 +183,10 @@ def run_grpo(
 
     optimizer = torch.optim.AdamW(policy_model.parameters(), lr=lr)
 
+    sleep_guard = SleepGuard()
+    sleep_guard.start()
+    interrupt_handler = GracefulInterruptHandler()
+
     stage_desc = "Multimodal GRPO (Visual Reasoning)" if multimodal else "GRPO"
     print(f"\n--- Starting {stage_desc} (Group Size G={group_size}) ---")
     start_time = time.time()
@@ -189,99 +194,115 @@ def run_grpo(
     img_id = tokenizer.convert_tokens_to_ids("<|image|>")
     img_tokens = [img_id] * 49 if multimodal and img_id is not None else []
 
-    for step in range(1, steps + 1):
-        prompt_idx = (step - 1) % len(task_prompts)
-        curr_prompt = task_prompts[prompt_idx]
-        target = task_targets[prompt_idx]
+    try:
+        for step in range(1, steps + 1):
+            prompt_idx = (step - 1) % len(task_prompts)
+            curr_prompt = task_prompts[prompt_idx]
+            target = task_targets[prompt_idx]
 
-        if multimodal and "<|image|>" not in curr_prompt:
-            p_prefix = tokenizer.encode("<|im_start|>user\n", add_special_tokens=False) + img_tokens
-            p_suffix = tokenizer.encode(f"{curr_prompt}<|im_end|>\n<|im_start|>assistant\n", add_special_tokens=False)
-            prompt_ids = torch.tensor([p_prefix + p_suffix], dtype=torch.long, device=device)
+            if multimodal and "<|image|>" not in curr_prompt:
+                p_prefix = tokenizer.encode("<|im_start|>user\n", add_special_tokens=False) + img_tokens
+                p_suffix = tokenizer.encode(f"{curr_prompt}<|im_end|>\n<|im_start|>assistant\n", add_special_tokens=False)
+                prompt_ids = torch.tensor([p_prefix + p_suffix], dtype=torch.long, device=device)
+            else:
+                prompt_text = f"<|im_start|>user\n{curr_prompt}<|im_end|>\n<|im_start|>assistant\n"
+                prompt_ids = tokenizer.encode(prompt_text, return_tensors="pt").to(device)
+
+            prompt_len = prompt_ids.shape[1]
+            pixel_vals = torch.randn(group_size, 3, 224, 224, device=device) if multimodal else None
+
+            # Generate G candidate completions with sampling
+            policy_model.eval()
+            with torch.no_grad():
+                expanded_prompt = prompt_ids.repeat(group_size, 1)
+                gen_kwargs = {"pixel_values": pixel_vals} if multimodal else {}
+                generated_ids = policy_model.generate(
+                    expanded_prompt,
+                    max_new_tokens=40,
+                    do_sample=True,
+                    temperature=0.8,
+                    top_p=0.9,
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id,
+                    **gen_kwargs,
+                )
+
+            # Decode candidates and compute verifier rewards
+            rewards = []
+            for i in range(group_size):
+                completion = tokenizer.decode(generated_ids[i, prompt_len:], skip_special_tokens=True)
+                r = rule_based_verifier(completion, target)
+                rewards.append(r)
+
+            rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=device)
+
+            # Normalize rewards across the group: A_i = (r_i - mean) / (std + eps)
+            r_mean = rewards_tensor.mean()
+            r_std = rewards_tensor.std()
+            if r_std < 1e-4:
+                advantages = torch.zeros_like(rewards_tensor)
+            else:
+                advantages = (rewards_tensor - r_mean) / (r_std + 1e-4)
+
+            # Train policy on candidate rollouts
+            policy_model.train()
+            optimizer.zero_grad()
+
+            # Compute log probs under current policy π_θ and ref π_ref
+            pi_logps = compute_sequence_log_prob(policy_model, generated_ids, prompt_len, pixel_values=pixel_vals)
+            with torch.no_grad():
+                ref_logps = compute_sequence_log_prob(ref_model, generated_ids, prompt_len, pixel_values=pixel_vals)
+
+            # Compute ratio and KL penalty
+            log_ratio = pi_logps - pi_logps.detach()
+            ratio = torch.exp(log_ratio)
+
+            surr1 = ratio * advantages
+            surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * advantages
+            policy_loss = -torch.min(surr1, surr2).mean()
+
+            # Approximate KL divergence: KL(π || π_ref) = exp(ref_logps - pi_logps) - (ref_logps - pi_logps) - 1
+            kl_div = (torch.exp(ref_logps - pi_logps) - (ref_logps - pi_logps) - 1.0).mean()
+            total_loss = policy_loss + beta_kl * kl_div
+
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy_model.parameters(), 1.0)
+            optimizer.step()
+
+            if step % 2 == 0 or step == steps:
+                print(
+                    f"GRPO Step {step:2d}/{steps} | "
+                    f"Avg Reward: {r_mean.item():.3f} | "
+                    f"Max Reward: {rewards_tensor.max().item():.3f} | "
+                    f"Policy Loss: {policy_loss.item():.4f} | "
+                    f"KL: {kl_div.item():.4f}"
+                )
+
+            # Graceful Interrupt Handling
+            if interrupt_handler.interrupted:
+                print(f"\n[Interrupt] Saving emergency GRPO model at step {step}...")
+                interrupted_path = os.path.join(output_dir, f"interrupted_step_{step:04d}")
+                os.makedirs(interrupted_path, exist_ok=True)
+                if multimodal:
+                    torch.save(policy_model.state_dict(), os.path.join(interrupted_path, "multimodal_grpo.pt"))
+                else:
+                    policy_model.save_pretrained(interrupted_path)
+                    tokenizer.save_pretrained(interrupted_path)
+                print(f"[Interrupt] Safely saved to {interrupted_path}. GRPO paused.")
+                return interrupted_path
+
+        final_path = os.path.join(output_dir, "model")
+        os.makedirs(final_path, exist_ok=True)
+        if multimodal:
+            torch.save(policy_model.state_dict(), os.path.join(final_path, "multimodal_grpo.pt"))
+            print(f"\nMultimodal GRPO alignment finished in {time.time() - start_time:.2f}s! Saved weights to {final_path}/multimodal_grpo.pt")
         else:
-            prompt_text = f"<|im_start|>user\n{curr_prompt}<|im_end|>\n<|im_start|>assistant\n"
-            prompt_ids = tokenizer.encode(prompt_text, return_tensors="pt").to(device)
-
-        prompt_len = prompt_ids.shape[1]
-        pixel_vals = torch.randn(group_size, 3, 224, 224, device=device) if multimodal else None
-
-        # Generate G candidate completions with sampling
-        policy_model.eval()
-        with torch.no_grad():
-            expanded_prompt = prompt_ids.repeat(group_size, 1)
-            gen_kwargs = {"pixel_values": pixel_vals} if multimodal else {}
-            generated_ids = policy_model.generate(
-                expanded_prompt,
-                max_new_tokens=40,
-                do_sample=True,
-                temperature=0.8,
-                top_p=0.9,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-                **gen_kwargs,
-            )
-
-        # Decode candidates and compute verifier rewards
-        rewards = []
-        for i in range(group_size):
-            completion = tokenizer.decode(generated_ids[i, prompt_len:], skip_special_tokens=True)
-            r = rule_based_verifier(completion, target)
-            rewards.append(r)
-
-        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=device)
-
-        # Normalize rewards across the group: A_i = (r_i - mean) / (std + eps)
-        r_mean = rewards_tensor.mean()
-        r_std = rewards_tensor.std()
-        if r_std < 1e-4:
-            advantages = torch.zeros_like(rewards_tensor)
-        else:
-            advantages = (rewards_tensor - r_mean) / (r_std + 1e-4)
-
-        # Train policy on candidate rollouts
-        policy_model.train()
-        optimizer.zero_grad()
-
-        # Compute log probs under current policy π_θ and ref π_ref
-        pi_logps = compute_sequence_log_prob(policy_model, generated_ids, prompt_len, pixel_values=pixel_vals)
-        with torch.no_grad():
-            ref_logps = compute_sequence_log_prob(ref_model, generated_ids, prompt_len, pixel_values=pixel_vals)
-
-        # Compute ratio and KL penalty
-        log_ratio = pi_logps - pi_logps.detach()
-        ratio = torch.exp(log_ratio)
-
-        surr1 = ratio * advantages
-        surr2 = torch.clamp(ratio, 1.0 - clip_eps, 1.0 + clip_eps) * advantages
-        policy_loss = -torch.min(surr1, surr2).mean()
-
-        # Approximate KL divergence: KL(π || π_ref) = exp(ref_logps - pi_logps) - (ref_logps - pi_logps) - 1
-        kl_div = (torch.exp(ref_logps - pi_logps) - (ref_logps - pi_logps) - 1.0).mean()
-        total_loss = policy_loss + beta_kl * kl_div
-
-        total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(policy_model.parameters(), 1.0)
-        optimizer.step()
-
-        if step % 2 == 0 or step == steps:
-            print(
-                f"GRPO Step {step:2d}/{steps} | "
-                f"Avg Reward: {r_mean.item():.3f} | "
-                f"Max Reward: {rewards_tensor.max().item():.3f} | "
-                f"Policy Loss: {policy_loss.item():.4f} | "
-                f"KL: {kl_div.item():.4f}"
-            )
-
-    final_path = os.path.join(output_dir, "model")
-    os.makedirs(final_path, exist_ok=True)
-    if multimodal:
-        torch.save(policy_model.state_dict(), os.path.join(final_path, "multimodal_grpo.pt"))
-        print(f"\nMultimodal GRPO alignment finished in {time.time() - start_time:.2f}s! Saved weights to {final_path}/multimodal_grpo.pt")
-    else:
-        policy_model.save_pretrained(final_path)
-        tokenizer.save_pretrained(final_path)
-        print(f"\nGRPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
-    return final_path
+            policy_model.save_pretrained(final_path)
+            tokenizer.save_pretrained(final_path)
+            print(f"\nGRPO alignment finished in {time.time() - start_time:.2f}s! Saved to {final_path}")
+        return final_path
+    finally:
+        sleep_guard.stop()
 
 
 if __name__ == "__main__":
