@@ -59,27 +59,29 @@ pie title JerboaLM 138M Pre-training Data Mixture
 | **Code & Logic** | **Python-Edu & The Stack Smol** | `HuggingFaceTB/smollm-corpus` (`python-edu`) | **20%** | Educational Python scripts, docstrings, unit tests, and algorithmic solutions. Trains causal dependencies and logic. |
 | **STEM & Knowledge** | **FineMath + Wikipedia** | `HuggingFaceFW/finemath` + `wikimedia/wikipedia` | **10%** | Multi-step mathematical deductions, LaTeX expressions, and encyclopedic factual grounding. |
 
-### Latest Ecosystem Context & SOTA Model Provenance
+### Latest Ecosystem Context & SOTA Model Provenance (SmolLM2 to SmolLM3)
 
-The datasets selected above directly mirror the **2nd-generation SLM recipe (SmolLM2, DCLM, Llama-3-Edu)** developed in late 2024:
+The dataset portfolio is continuously aligned with the latest open-source small model frontier, progressing through three distinct evolutionary generations:
 
 ```
-[Generation 1: 2022-2023]                [Generation 2: Late 2024 - Present (Jerboa Target)]
-Raw Common Crawl / C4               -->  FineWeb-Edu (Llama-3-70B Classifier, Score >= 3)
-The Pile / RefinedWeb               -->  DCLM (Apple/UW DataComp-LM, ICML 2024 Best Paper)
-Raw GitHub Scrapes (The Stack v1)   -->  Stack-Edu & Python-Edu (Educational Filtering)
-Basic Math Forums (MathOverflow)    -->  FineMath-4plus (Multi-step Reasoning & Proofs)
-Hand-written Instruction Sets       -->  Cosmopedia v2 (Synthetic High-Density Knowledge)
+[Generation 1: 2022-2023]     [Generation 2: Late 2024 (SmolLM2)]     [Generation 3: Current (SmolLM3 Collection)]
+Raw Common Crawl / C4    -->  FineWeb-Edu (Score >= 3)           -->  FineWeb-2 / FineWeb2-HQ + DCLM-1.0
+The Pile / RefinedWeb    -->  DCLM (Apple/UW DataComp-LM)        -->  Curated Multi-Domain Web (11.2T mix)
+Raw GitHub (Stack v1)    -->  Python-Edu & Stack-Edu             -->  Stack-Edu + Issues & Kaggle Notebooks
+MathOverflow / GSM8K     -->  FineMath-4plus                     -->  FineMath + MegaMath + OpenMathReasoning
+Hand-crafted Prompts     -->  Cosmopedia v2                      -->  StackExchange 2025 + Synthetic Reasoning
 ```
 
-1. **FineWeb-Edu (Hugging Face, 2024)**:
-   - Replaces older raw dumps (C4, RefinedWeb). Used in cutting-edge open models because it scores web text via a synthetic educator rubric.
-2. **FineMath (Hugging Face, late 2024)**:
-   - Created specifically during the SmolLM2 project to resolve the historical weakness of small models in mathematical reasoning (`finemath-4plus`).
-3. **Stack-Edu & Python-Edu (HuggingFaceTB)**:
-   - Successor to generic GitHub dumps; uses educational classifier filters on StarCoder2/Stack v2. For 138M parameter models, Python-first logic yields the highest parameter efficiency.
-4. **Cosmopedia v2**:
-   - The upgraded v2 release resolves repetitive topic clustering present in v1, producing textbook-grade conceptual continuity.
+#### Key Upgrades in the SmolLM3 Ecosystem:
+1. **SmolLM3 Architecture & Data Strategy**:
+   - Hugging Face's flagship **SmolLM3 (SmolLM3-3B)** was trained on an unprecedented **11.2 Trillion tokens** using the public `smollm3-pretraining-datasets` collection.
+   - It demonstrated that combining **FineWeb-Edu / FineWeb-2** with **DCLM** produces substantially higher general knowledge per token than relying on synthetic text alone.
+2. **Next-Generation Reasoning Datasets**:
+   - **`HuggingFaceTB/finemath`** & **`nvidia/OpenMathReasoning`**: Multi-step deductive reasoning and formula verification.
+   - **`HuggingFaceTB/issues-kaggle-notebooks`**: Real-world exploratory data science and problem-solving logic.
+3. **Application to JerboaLM (~138M)**:
+   - While SmolLM3 targets 3B parameters with 11.2T tokens on compute clusters, JerboaLM distills the **exact same 3rd-generation dataset mixture** into a focused 1.0B–2.0B token budget.
+   - This delivers state-of-the-art token efficiency on local Apple Silicon (MPS) without computing redundant or noisy web data.
 
 ---
 
