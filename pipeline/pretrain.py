@@ -229,6 +229,7 @@ def run_pretrain(
     output_dir: str = "checkpoints/pretrain",
     text_file: Optional[str] = None,
     resume: Optional[str] = None,
+    min_score: int = 3,
     enable_mtp: bool = True,
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
@@ -330,7 +331,9 @@ def run_pretrain(
             )
 
     # 2. Mode execution
-    if text_file and os.path.exists(text_file):
+    if mode == "file" and text_file and os.path.exists(text_file):
+        mode = "file"
+    elif text_file and os.path.exists(text_file) and mode not in ("rolling", "stream"):
         mode = "file"
 
     if mode == "rolling":
@@ -373,7 +376,7 @@ def run_pretrain(
                 output_path=temp_chunk_path,
                 skip_docs=stream_cursor,
                 target_docs=docs_per_chunk,
-                min_score=3,
+                min_score=min_score,
             )
 
             stream_cursor = chunk_meta["end_offset"]
@@ -696,6 +699,7 @@ if __name__ == "__main__":
     parser.add_argument("--text_file", type=str, default=default_text, help="Path to local text file (triggers file mode)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/pretrain", help="Directory to save checkpoints")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint directory or state file to resume from")
+    parser.add_argument("--min_score", type=int, default=3, help="Minimum educational classifier score (default: 3)")
     parser.add_argument("--enable_mtp", action="store_true", default=True, help="Enable multi-token prediction (MTP) auxiliary objective")
     parser.add_argument("--no_mtp", action="store_false", dest="enable_mtp", help="Disable multi-token prediction")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
@@ -717,6 +721,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         text_file=args.text_file,
         resume=args.resume,
+        min_score=args.min_score,
         enable_mtp=args.enable_mtp,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,

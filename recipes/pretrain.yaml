@@ -1,14 +1,27 @@
-# Pre-training Recipe (Rolling-Buffer on Apple Silicon / MPS)
-mode: file
-source: data/pretrain/fineweb_edu_sample.txt
+# JerboaLM Pre-training Recipe (Milestone 1: 1.0B Token Fluency Run)
+# Documented in docs/pretrain_data_plan.md (Phase 1 Curriculum: Educational Web & High-Signal Corpus)
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
 min_score: 3
-chunks: 5
-docs_per_chunk: 500
-steps_per_chunk: 15
+
+# Compute budget: 670 chunks x ~1.5M tokens/chunk ≈ 1.0 Billion tokens
+chunks: 670
+docs_per_chunk: 1000
+steps_per_chunk: 30
+
+# Training hyperparameters (Optimized for Apple Silicon MPS)
 batch_size: 4
+grad_accum: 4
 seq_len: 256
-lr: 3.0e-4
+lr: 4.0e-4
+
+# Fault tolerance & model architecture
 resume: auto
 enable_mtp: true
+
+# Experiment tracking
 wandb: false
-wandb_run: exp-pretrain
+wandb_project: jerboa
+wandb_run: jerboa-138m-1b-run
