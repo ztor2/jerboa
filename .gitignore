@@ -10,3 +10,6 @@ data/**
 data/manifests/
 .env
 wandb/
+tmp/
+aihubshell*
+*.tar
