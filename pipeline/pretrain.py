@@ -744,7 +744,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
-    args = apply_recipe(args, "recipes/pretrain.yaml")
+    args = apply_recipe(args, args.recipe or "recipes/pretrain.yaml")
 
     run_pretrain(
         mode=args.mode,

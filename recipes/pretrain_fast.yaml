@@ -1,0 +1,31 @@
+# JerboaLM Pre-training Recipe (High-Throughput Dedicated Run)
+# Optimized for Apple Silicon M5 Pro when user is away / dedicated training
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Compute budget: 670 chunks x ~1,000 docs (1-Epoch per chunk, ~1.5M tokens/chunk) ≈ 1.0 Billion tokens
+chunks: 670
+docs_per_chunk: 1000
+
+# High-Throughput hyperparameters:
+# Larger micro-batch (8) saturates Metal SIMD cores, with grad_accum 2 (effective batch 16 preserved)
+batch_size: 8
+grad_accum: 2
+seq_len: 256
+lr: 4.0e-4
+
+# Fault tolerance & model architecture
+resume: auto
+enable_mtp: true
+
+# Dedicated run memory limits (Higher MPS headroom allowed when idle)
+max_mem_fraction: 0.40
+system_ram_limit: 88.0
+
+# Experiment tracking
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-138m-1b-fast-run

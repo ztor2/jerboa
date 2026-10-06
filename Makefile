@@ -15,20 +15,24 @@ help:
 	@echo "======================================================================"
 	@echo "                       JERBOA WORKFLOW RUNNER                         "
 	@echo "======================================================================"
-	@echo "  make pretrain    - Run Rolling-Buffer Pre-training (RESUME=auto supported)"
-	@echo "  make sft         - Run Supervised Fine-Tuning (RESUME=auto supported)"
-	@echo "  make dpo         - Run Direct Preference Optimization (recipes/dpo.yaml)"
-	@echo "  make grpo        - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
-	@echo "  make multimodal  - Run Multimodal Alignment (recipes/multimodal.yaml)"
-	@echo "  make bench       - Run Apple Silicon (MPS) Throughput Benchmark"
-	@echo "  make chat        - Launch Interactive Text Chat REPL"
-	@echo "  make history     - View Training Provenance Ledger & Loss Curves"
-	@echo "  make upload      - Upload checkpoint to HF Hub (STAGE=pretrain|sft|dpo|grpo, default: sft)"
-	@echo "  make clean       - Remove Python cache files"
+	@echo "  make pretrain         - Run Pre-training (balanced multitasking mode, recipes/pretrain.yaml)"
+	@echo "  make pretrain-fast    - Run High-Throughput Pre-training (dedicated mode, batch=8, recipes/pretrain_fast.yaml)"
+	@echo "  make sft              - Run Supervised Fine-Tuning (RESUME=auto supported)"
+	@echo "  make dpo              - Run Direct Preference Optimization (recipes/dpo.yaml)"
+	@echo "  make grpo             - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
+	@echo "  make multimodal       - Run Multimodal Alignment (recipes/multimodal.yaml)"
+	@echo "  make bench            - Run Apple Silicon (MPS) Throughput Benchmark"
+	@echo "  make chat             - Launch Interactive Text Chat REPL"
+	@echo "  make history          - View Training Provenance Ledger & Loss Curves"
+	@echo "  make upload           - Upload checkpoint to HF Hub (STAGE=pretrain|sft|dpo|grpo, default: sft)"
+	@echo "  make clean            - Remove Python cache files"
 	@echo "======================================================================"
 
 pretrain:
-	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe recipes/pretrain.yaml $(if $(RESUME),--resume $(RESUME),)
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+pretrain-fast:
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain_fast.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 sft:
 	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)
