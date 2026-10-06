@@ -1,6 +1,7 @@
 .PHONY: help pretrain sft dpo grpo multimodal bench chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
 
-PYTHON ?= python
+VENV_PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3 >/dev/null 2>&1; then echo python3; else echo python; fi)
+PYTHON ?= $(VENV_PYTHON)
 STAGE ?= sft
 MODEL ?= checkpoints/$(STAGE)/model
 REPO ?= jerboa
