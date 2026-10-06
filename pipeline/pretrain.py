@@ -229,6 +229,7 @@ def run_pretrain(
     output_dir: str = "checkpoints/pretrain",
     text_file: Optional[str] = None,
     resume: Optional[str] = None,
+    enable_mtp: bool = True,
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
     wandb_run_name: Optional[str] = None,
@@ -290,7 +291,8 @@ def run_pretrain(
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
     else:
-        print("Initializing new JerboaLM (138M params, GQA, QK-Norm, Tied Embeddings)...")
+        mtp_status = "Enabled (t -> t+2)" if enable_mtp else "Disabled"
+        print(f"Initializing new JerboaLM (138M params, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
         config = JerboaConfig(
             vocab_size=len(tokenizer),
             hidden_size=768,
@@ -300,6 +302,7 @@ def run_pretrain(
             num_key_value_heads=4,
             tie_word_embeddings=True,
             qk_norm=True,
+            enable_mtp=enable_mtp,
         )
         model = JerboaForCausalLM(config)
 
@@ -693,6 +696,8 @@ if __name__ == "__main__":
     parser.add_argument("--text_file", type=str, default=default_text, help="Path to local text file (triggers file mode)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/pretrain", help="Directory to save checkpoints")
     parser.add_argument("--resume", type=str, default=None, help="Checkpoint directory or state file to resume from")
+    parser.add_argument("--enable_mtp", action="store_true", default=True, help="Enable multi-token prediction (MTP) auxiliary objective")
+    parser.add_argument("--no_mtp", action="store_false", dest="enable_mtp", help="Disable multi-token prediction")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -712,6 +717,7 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         text_file=args.text_file,
         resume=args.resume,
+        enable_mtp=args.enable_mtp,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,

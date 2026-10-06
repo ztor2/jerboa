@@ -516,7 +516,7 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
         self.model = JerboaModel(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        self.mtp_module = JerboaMTPModule(config) if getattr(config, "use_mtp", False) else None
+        self.mtp_module = JerboaMTPModule(config) if getattr(config, "enable_mtp", getattr(config, "use_mtp", False)) else None
 
         # Initialize weights and tie embeddings
         self.post_init()

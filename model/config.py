@@ -46,6 +46,7 @@ class JerboaConfig(PretrainedConfig):
         sliding_window: int | None = 2048,
         global_layer_interval: int = 4,
         # Multi-Token Prediction (MTP)
+        enable_mtp: bool = True,
         use_mtp: bool = False,
         mtp_loss_factor: float = 0.3,
         # Multimodal parameters
@@ -73,6 +74,7 @@ class JerboaConfig(PretrainedConfig):
         self.attention_dropout = attention_dropout
         self.sliding_window = sliding_window
         self.global_layer_interval = global_layer_interval
+        self.enable_mtp = enable_mtp
         self.use_mtp = use_mtp
         self.mtp_loss_factor = mtp_loss_factor
 
