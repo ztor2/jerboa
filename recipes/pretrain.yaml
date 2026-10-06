@@ -6,10 +6,9 @@ source: HuggingFaceFW/fineweb-edu
 subset: sample-10BT
 min_score: 3
 
-# Compute budget: 670 chunks x ~1.5M tokens/chunk ≈ 1.0 Billion tokens
+# Compute budget: 670 chunks x ~1,000 docs (1-Epoch per chunk, ~1.5M tokens/chunk) ≈ 1.0 Billion tokens
 chunks: 670
 docs_per_chunk: 1000
-steps_per_chunk: 30
 
 # Training hyperparameters (Optimized for Apple Silicon MPS)
 batch_size: 4
@@ -25,7 +24,7 @@ enable_mtp: true
 max_mem_fraction: 0.25
 system_ram_limit: 85.0
 
-# Experiment tracking
-wandb: false
+# Experiment tracking (Weights & Biases cloud sync via .env WANDB_API_KEY)
+wandb: true
 wandb_project: jerboa
 wandb_run: jerboa-138m-1b-run

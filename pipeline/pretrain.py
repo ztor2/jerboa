@@ -344,13 +344,18 @@ def run_pretrain(
         mode = "file"
 
     if mode == "rolling":
-        # Traceable Rolling-Buffer Pre-training
+        # Traceable Rolling-Buffer Pre-training (1-Epoch per chunk)
+        # 1 doc avg ~1,500 tokens -> docs_per_chunk * 1500 tokens / (batch_size * grad_accum * seq_len)
+        tokens_per_step = max(batch_size * grad_accum_steps * seq_len, 1)
+        est_steps_per_chunk = max(int((docs_per_chunk * 1500) / tokens_per_step), 1)
+        planned_total_steps = total_chunks * est_steps_per_chunk
+
         optimizer, scheduler = create_optimizer_and_scheduler(
             model=model,
             learning_rate=lr,
             weight_decay=0.05,
-            total_steps=total_chunks * steps_per_chunk,
-            warmup_steps=10,
+            total_steps=planned_total_steps,
+            warmup_steps=min(100, max(10, planned_total_steps // 20)),
         )
 
         # Restore optimizer/scheduler state if available
@@ -396,20 +401,21 @@ def run_pretrain(
                 tokenizer=tokenizer,
             )
             dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-            data_iter = iter(dataloader)
+            total_batches = len(dataloader)
+            effective_chunk_steps = max(total_batches // grad_accum_steps, 1)
+
+            print(f"[{chunk_name}] Loaded {len(dataset):,} sequences ({chunk_tokens:,} tokens). Total optimizer steps: {effective_chunk_steps}")
 
             model.train()
             chunk_start_time = time.time()
             chunk_losses = []
+            running_loss = 0.0
+            accum_count = 0
             step_in_chunk = 0
 
-            while step_in_chunk < steps_per_chunk:
-                try:
-                    batch = next(data_iter)
-                except StopIteration:
-                    data_iter = iter(dataloader)
-                    batch = next(data_iter)
+            pbar = tqdm(total=effective_chunk_steps, desc=f"Training {chunk_name}")
 
+            for batch_idx, batch in enumerate(dataloader):
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
 
@@ -417,35 +423,57 @@ def run_pretrain(
                 loss = outputs.loss / grad_accum_steps
                 loss.backward()
 
-                if (step_in_chunk + 1) % grad_accum_steps == 0 or (step_in_chunk + 1) == steps_per_chunk:
+                running_loss += outputs.loss.item()
+                accum_count += 1
+
+                is_last_batch = (batch_idx + 1 == total_batches)
+
+                if accum_count % grad_accum_steps == 0 or is_last_batch:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()
                     global_step += 1
+                    step_in_chunk += 1
 
-                    step_loss = outputs.loss.item()
-                    chunk_losses.append(step_loss)
+                    cur_step_loss = running_loss / max(accum_count, 1)
+                    chunk_losses.append(cur_step_loss)
 
-                    cur_tokens = cumulative_tokens + int((step_in_chunk / steps_per_chunk) * chunk_tokens)
+                    elapsed = time.time() - chunk_start_time
+                    tokens_processed = int((batch_idx + 1) / total_batches * chunk_tokens)
+                    cur_tokens = cumulative_tokens + tokens_processed
+                    tok_per_sec = tokens_processed / max(elapsed, 1e-4)
+
+                    pbar.set_postfix({
+                        "loss": f"{cur_step_loss:.4f}",
+                        "speed": f"{tok_per_sec:.0f} tok/s",
+                        "lr": f"{scheduler.get_last_lr()[0]:.2e}",
+                    })
+                    pbar.update(1)
+
                     log_metrics_record({
                         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                         "global_step": global_step,
                         "chunk": chunk_name,
-                        "loss": round(step_loss, 4),
-                        "perplexity": round(float(torch.exp(torch.tensor(step_loss))), 2),
+                        "loss": round(cur_step_loss, 4),
+                        "perplexity": round(float(torch.exp(torch.tensor(cur_step_loss))), 2),
                         "lr": scheduler.get_last_lr()[0],
+                        "tokens_per_sec": round(tok_per_sec, 1),
                         "cumulative_tokens": cur_tokens,
                     })
 
                     if use_wandb:
                         wandb.log({
-                            "train/loss": step_loss,
-                            "train/perplexity": float(torch.exp(torch.tensor(step_loss))),
+                            "train/loss": cur_step_loss,
+                            "train/perplexity": float(torch.exp(torch.tensor(cur_step_loss))),
                             "train/lr": scheduler.get_last_lr()[0],
+                            "train/tokens_per_sec": tok_per_sec,
                             "train/cumulative_tokens": cur_tokens,
                             "global_step": global_step,
                         })
+
+                    running_loss = 0.0
+                    accum_count = 0
 
                 # Graceful Interrupt Handling
                 if interrupt_handler.interrupted:
@@ -484,10 +512,10 @@ def run_pretrain(
                     if use_wandb:
                         wandb.finish()
                     sleep_guard.stop()
+                    pbar.close()
                     return interrupted_dir
 
-                step_in_chunk += 1
-
+            pbar.close()
             cumulative_tokens += chunk_tokens
             chunk_elapsed = time.time() - chunk_start_time
             avg_chunk_loss = sum(chunk_losses) / max(len(chunk_losses), 1)
@@ -500,7 +528,7 @@ def run_pretrain(
                     "global_step": global_step,
                 })
 
-            print(f"\n[{chunk_name}] Steps: {steps_per_chunk} | Avg Loss: {avg_chunk_loss:.4f} | Time: {chunk_elapsed:.1f}s")
+            print(f"\n[{chunk_name}] Completed {step_in_chunk} steps ({chunk_tokens:,} tokens) | Avg Loss: {avg_chunk_loss:.4f} | Time: {chunk_elapsed:.1f}s")
 
             steps_dir = os.path.join(output_dir, "steps")
             os.makedirs(steps_dir, exist_ok=True)
