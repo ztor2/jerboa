@@ -82,6 +82,63 @@ class GracefulInterruptHandler:
         self._interrupted = False
 
 
+class SystemResourceGuard:
+    """Protects macOS system stability and prevents OOM/swapping during background training."""
+
+    def __init__(
+        self,
+        max_mps_fraction: float = 0.25,
+        system_ram_threshold: float = 85.0,
+        nice_priority: int = 10,
+    ):
+        self.max_mps_fraction = max_mps_fraction
+        self.system_ram_threshold = system_ram_threshold
+        self.nice_priority = nice_priority
+        self._initialized = False
+
+    def setup(self):
+        """Configure MPS memory ceilings and process priority."""
+        if self._initialized:
+            return
+
+        # 1. Lower process priority so foreground UI apps (Chrome, VSCode, Slack) stay smooth
+        if hasattr(os, "nice") and sys.platform == "darwin":
+            try:
+                os.nice(self.nice_priority)
+            except Exception:
+                pass
+
+        # 2. Limit MPS process memory fraction if on Apple Silicon
+        if torch.backends.mps.is_available() and hasattr(torch.mps, "set_per_process_memory_fraction"):
+            try:
+                torch.mps.set_per_process_memory_fraction(self.max_mps_fraction)
+            except Exception:
+                pass
+
+        self._initialized = True
+
+    def check_and_throttle(self) -> bool:
+        """Checks current system memory pressure and throttles if memory is constrained."""
+        if torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+
+        try:
+            import psutil
+            mem = psutil.virtual_memory()
+            if mem.percent >= self.system_ram_threshold:
+                print(f"\n[ResourceGuard] High system memory pressure: {mem.percent:.1f}% >= {self.system_ram_threshold}%.")
+                print("[ResourceGuard] Pausing 5s and freeing MPS cache to protect foreground apps...")
+                import gc
+                gc.collect()
+                if torch.backends.mps.is_available():
+                    torch.mps.empty_cache()
+                time.sleep(5.0)
+                return True
+        except ImportError:
+            pass
+        return False
+
+
 class CheckpointManager:
     """Manages saving, rotating, and restoring training checkpoints and states."""
 

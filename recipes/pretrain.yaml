@@ -21,6 +21,10 @@ lr: 4.0e-4
 resume: auto
 enable_mtp: true
 
+# Resource Guardrails (Keep Mac UI, Chrome, VSCode, Slack smooth)
+max_mem_fraction: 0.25
+system_ram_limit: 85.0
+
 # Experiment tracking
 wandb: false
 wandb_project: jerboa

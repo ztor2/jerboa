@@ -48,7 +48,7 @@ from transformers import get_cosine_schedule_with_warmup
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
-from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, SystemResourceGuard
 
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
@@ -231,6 +231,8 @@ def run_pretrain(
     resume: Optional[str] = None,
     min_score: int = 3,
     enable_mtp: bool = True,
+    max_mem_fraction: float = 0.25,
+    system_ram_limit: float = 85.0,
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
     wandb_run_name: Optional[str] = None,
@@ -245,6 +247,11 @@ def run_pretrain(
     sleep_guard = SleepGuard()
     sleep_guard.start()
     interrupt_handler = GracefulInterruptHandler()
+    resource_guard = SystemResourceGuard(
+        max_mps_fraction=max_mem_fraction,
+        system_ram_threshold=system_ram_limit,
+    )
+    resource_guard.setup()
 
     # 1. Checkpoint resumption or model initialization
     start_chunk = 1
@@ -367,6 +374,7 @@ def run_pretrain(
         temp_chunk_path = "data/ephemeral_chunk.txt"
 
         for chunk_idx in range(start_chunk, start_chunk + total_chunks):
+            resource_guard.check_and_throttle()
             chunk_name = f"chunk_{chunk_idx:04d}"
             print(f"\n==================================================")
             print(f"  PROCESSING {chunk_name.upper()} (Offset: {stream_cursor:,})")
@@ -702,6 +710,8 @@ if __name__ == "__main__":
     parser.add_argument("--min_score", type=int, default=3, help="Minimum educational classifier score (default: 3)")
     parser.add_argument("--enable_mtp", action="store_true", default=True, help="Enable multi-token prediction (MTP) auxiliary objective")
     parser.add_argument("--no_mtp", action="store_false", dest="enable_mtp", help="Disable multi-token prediction")
+    parser.add_argument("--max_mem_fraction", type=float, default=0.25, help="Maximum fraction of unified memory allowed for MPS (default: 0.25)")
+    parser.add_argument("--system_ram_limit", type=float, default=85.0, help="Pause/throttle training if total system RAM exceeds this percent (default: 85.0)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -723,6 +733,8 @@ if __name__ == "__main__":
         resume=args.resume,
         min_score=args.min_score,
         enable_mtp=args.enable_mtp,
+        max_mem_fraction=args.max_mem_fraction,
+        system_ram_limit=args.system_ram_limit,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
