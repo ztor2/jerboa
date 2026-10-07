@@ -961,7 +961,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_mem_fraction", type=float, default=0.25, help="Maximum fraction of unified memory allowed for MPS (default: 0.25)")
     parser.add_argument("--system_ram_limit", type=float, default=85.0, help="Pause/throttle training if total system RAM exceeds this percent (default: 85.0)")
     parser.add_argument("--aihub_dir", type=str, default=None, help="Directory containing AI-Hub raw zip archives")
-    parser.add_argument("--interleave_pattern", type=str, default="fineweb,aihub", help="Chunk alternation pattern (e.g. fineweb,aihub or fineweb,fineweb,aihub)")
+    parser.add_argument("--interleave_pattern", type=str, default="fineweb,fineweb,aihub,aihub,fineweb,code", help="Chunk alternation pattern (e.g. fineweb,fineweb,aihub,aihub,fineweb,code)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -989,5 +989,5 @@ if __name__ == "__main__":
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
         aihub_dir=getattr(args, "aihub_dir", None),
-        interleave_pattern=getattr(args, "interleave_pattern", "fineweb,aihub"),
+        interleave_pattern=getattr(args, "interleave_pattern", "fineweb,fineweb,aihub,aihub,fineweb,code"),
     )

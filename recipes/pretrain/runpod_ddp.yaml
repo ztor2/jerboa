@@ -6,13 +6,13 @@ source: HuggingFaceFW/fineweb-edu
 subset: sample-10BT
 min_score: 3
 
-# Multilingual Interleaving (Alternating chunk schedule)
+# Multilingual Interleaving (Blocked schedule: 50% English, 35% Korean, 15% Code)
 aihub_dir: data/raw/aihub_test
-interleave_pattern: fineweb,aihub
+interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
 
-# Compute budget: 1,000 chunks x 1,000 docs (approx 1.5B ~ 2.0B tokens)
+# Compute budget: 1,000 chunks x 1,500 docs (approx 2.5B tokens)
 chunks: 1000
-docs_per_chunk: 1000
+docs_per_chunk: 1500
 
 # RunPod 2x 3090 DDP hyperparameters:
 # Micro-batch 8 per GPU, seq_len 2048, grad_accum 2 -> Global batch = 8 * 2 GPUs * 2 accum = 32 (65,536 tokens/step)
