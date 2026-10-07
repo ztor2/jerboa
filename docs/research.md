@@ -108,27 +108,6 @@ When training multiple disparate distributions (English web, Korean conversation
   - Static model state (BF16 weights + BF16 grads + FP32 master weights + AdamW states) = **~3.5 GB**.
   - **>28 GB of free VRAM** remains for sequence length 2,048 activation caching, allowing large micro-batches (8–16) without activation checkpointing.
 
-### Hardware Spec Priority Hierarchy for SLM Training
-1. **Memory Bandwidth (GB/s) — Highest Practical Impact**:
-   - Transformer operations are severely memory-bandwidth bound during normalization (RMSNorm), activations, and attention KV cache lookups. High memory bandwidth directly dictates actual token throughput (tok/s).
-2. **VRAM Capacity (GB) — The Binary Gatekeeper**:
-   - Once total VRAM exceeds the model's static state (~3.5–4.5 GB) plus activation headroom (~4–8 GB), extra VRAM does not make calculations faster; it merely allows larger micro-batches.
-   - For a 221M model, **24 GB is already the absolute sweet spot (Goldilocks zone)**.
-3. **Tensor Core Architecture & BF16 Support**:
-   - Native Bfloat16 support is strictly mandatory to prevent gradient underflow/overflow without complex AMP loss scaling.
-4. **Interconnect & Multi-GPU Topology**:
-   - For multi-GPU DDP, NVLink (available on RTX 3090) provides 112 GB/s bidirectional interconnect, eliminating PCIe bus bottlenecks during gradient all-reduce.
-
-### Hardware Cost-Efficiency Comparison (Purchase Options)
-| GPU Setup | Price (KRW) | VRAM | Bandwidth | BF16 TFLOPS | 10B Pretrain Time | Cost-Efficiency Score |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **RTX 3090 24GB (Used)** | **~90만–110만** | 24 GB GDDR6X | **936 GB/s** | ~142 | ~80–95 hours | ★★★★★ (Best Value) |
-| **2x RTX 3090 NVLink** | **~200만–220만** | 48 GB (24x2) | 936 GB/s + NVLink | ~284 | ~42–48 hours | ★★★★★ (Best Multi-GPU) |
-| **RTX 4090 24GB** | ~260만–300만 | 24 GB GDDR6X | 1,008 GB/s | ~330 | ~40–45 hours | ★★★☆☆ (Diminishing Return) |
-| **RTX 5090 32GB** | ~800만–1,000만 | 32 GB GDDR7 | 1,792 GB/s | ~450 | ~35–40 hours | ★☆☆☆☆ (Overpriced in 2026) |
-| **Mac Studio (M2/M3 Ultra)** | ~450만–600만 | 64–128 GB Unified | ~800 GB/s | — | ~150+ hours (MPS) | ★★☆☆☆ (Inference Only) |
-
-
 ---
 
 ## 7. Multimodal Encoder Sizing: Built-in ViT-Nano vs. Foundation Backbones
