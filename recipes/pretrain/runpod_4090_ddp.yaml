@@ -1,0 +1,39 @@
+# JerboaLM Pre-training Recipe (RunPod 2x RTX 4090 24GB DDP, 48GB Aggregate VRAM)
+# High-Throughput Distributed Pre-training (~110,000 to ~120,000 tok/s)
+# 221M Deep & Thin Architecture (28 Layers, 49k BPE Tokenizer, rope_theta 500k)
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Multilingual Interleaving (Blocked schedule: 50% English, 35% Korean, 15% Code)
+aihub_dir: data/raw/aihub_test
+interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
+
+# Compute budget: 1,000 chunks x 1,500 docs (approx 2.5B tokens)
+chunks: 1000
+docs_per_chunk: 1500
+
+# RunPod 2x 4090 DDP hyperparameters:
+# Micro-batch 8 per GPU, seq_len 2048, grad_accum 2
+# Global batch = 8 * 2 GPUs * 2 accum = 32 sequences (65,536 tokens/step)
+batch_size: 8
+grad_accum: 2
+seq_len: 2048
+lr: 4.0e-4
+min_lr: 4.0e-5
+warmup_ratio: 0.03
+weight_decay: 0.1
+
+# Fault tolerance & model architecture
+resume: auto
+enable_mtp: true
+
+# Guardrails
+system_ram_limit: 90.0
+
+# Experiment tracking (WandB Real-time Dashboard Enabled)
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-runpod-2x4090-ddp
