@@ -1,6 +1,6 @@
 # Model Architecture & Design
 
-JerboaLM is an ultra-lightweight language and multimodal model (~138M–146M parameters) designed for Apple Silicon (MPS / Metal) and edge deployments.
+JerboaLM is an ultra-lightweight language and multimodal model (~133M base / up to ~885M multimodal) designed for Apple Silicon (MPS / Metal) and edge/cloud deployments.
 
 ---
 
@@ -8,14 +8,15 @@ JerboaLM is an ultra-lightweight language and multimodal model (~138M–146M par
 
 | Parameter | Language Backbone (`JerboaForCausalLM`) | Multimodal (`JerboaVLForConditionalGeneration`) |
 | :--- | :--- | :--- |
-| **Total Parameters** | **~138.4M** (base) / **~145.9M** (with MTP) | **~145.2M** |
+| **Total Parameters** | **~133.3M** (base) / **~140.8M** (with MTP) | **~141.7M** (built-in ViT) / **~885.2M** (EmbeddingGemma-2) |
+| **Trainable Parameters** | **~133.3M** | **~141.7M** (built-in) / **~140.8M** (frozen EmbeddingGemma) |
 | **Hidden Size ($d_{model}$)** | 768 | 768 |
 | **Intermediate Size ($d_{ffn}$)** | 2048 (SwiGLU) | 2048 |
 | **Layers** | 16 | 16 |
 | **Attention Heads** | 12 Query / 4 KV (GQA 3:1) | 12 Query / 4 KV |
 | **Context Length** | 4,096 tokens (extensible to 16K via YaRN) | 4,096 tokens |
 | **Vocabulary Size** | 49,164 tokens | 49,164 tokens |
-| **VRAM Footprint** | **~500 MB** (FP32) / **~250 MB** (FP16) | **~600 MB** |
+| **VRAM Footprint** | **~500 MB** (FP32) / **~270 MB** (FP16) | **~600 MB** (built-in) / **~1.8 GB** (EmbeddingGemma FP16) |
 
 ---
 
@@ -69,9 +70,11 @@ Fully registered tokens to prevent sub-word fragmentation:
 
 ## 4. Multimodal Extension (`JerboaVL`)
 
-- **Vision**: ViT encoder with $2\times 2$ spatial pooling compressing 196 patches into **49 tokens**, minimizing multimodal prefill latency.
+- **Vision Backbone Options**:
+  - **EmbeddingGemma-2 (`google/embeddinggemma-2`)**: Frozen multimodal embedding backbone (~744.4M parameters) providing pre-aligned visual-text representations. Features are aligned to Jerboa's $d_{model}=768$ space via a linear projection layer, enabling high-performance visual reasoning with minimal training compute.
+  - **Built-in ViT**: Lightweight custom ViT encoder (~8.4M parameters) with $2\times 2$ spatial pooling compressing 196 patches into **49 tokens**, minimizing multimodal prefill latency.
 - **Audio**: 80-channel log-Mel spectrogram encoder with 1D convolution downsampling.
-- **Alignment**: 2-layer MLP projectors align visual and acoustic feature representations into LLM token embedding space.
+- **Alignment**: Linear and 2-layer MLP projectors align visual and acoustic feature representations into LLM token embedding space.
 - **Modular Architecture**: Vision and Audio projectors can be trained, saved, and loaded independently as lightweight plug-in modules (`projector.pt` ~2–3MB).
 
 ---
