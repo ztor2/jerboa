@@ -85,7 +85,30 @@ python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml --no_wand
 
 ---
 
-## 4. Post-Training Roadmap
+---
+
+## 4. Hugging Face Hub Automated Checkpoint Backup
+
+To safeguard against sudden instance termination or credit depletion without blocking training throughput:
+
+```bash
+# Run in a dedicated tmux window (e.g., 'checkpoints-backup')
+python scripts/tools/hub_backup_daemon.py \
+  --repo_id ztor2/jerboa-pretrain-checkpoints \
+  --interval_chunks 15
+```
+
+- **Interval**: Backs up every 15 chunks (~15–20 minutes, ~23M tokens).
+- **Safety**: Instant zero-copy hardlinks protect checkpoints from local rolling pruning (`save_total_limit`) during network upload.
+- **Immediate Emergency Sync**: Uploads emergency checkpoints (`interrupted_chunk_*`) instantly upon detection.
+- **Resume Directly from Hub**:
+  ```bash
+  python pipeline/pretrain.py --resume ztor2/jerboa-pretrain-checkpoints
+  ```
+
+---
+
+## 5. Post-Training Roadmap
 
 ```
 Phase 1 Base (10B) ──▶ Smoke Inference Test ──▶ Phase 2 Long Context (8K) ──▶ SFT / VLM ──▶ Backup Weights
