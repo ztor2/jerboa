@@ -107,3 +107,30 @@ When training multiple disparate distributions (English web, Korean conversation
 - **VRAM Headroom**:
   - Static model state (BF16 weights + BF16 grads + FP32 master weights + AdamW states) = **~3.5 GB**.
   - **>28 GB of free VRAM** remains for sequence length 2,048 activation caching, allowing large micro-batches (8–16) without activation checkpointing.
+
+---
+
+## 7. Multimodal Encoder Sizing: Built-in ViT-Nano vs. Foundation Backbones
+
+### Core Tension
+- **Built-in Encoders**: Custom ViT-Nano (~8.4M–15M params) and Mel-Spectrogram Conv+Transformer (~3.2M params).
+- **External Foundation Backbones**: `google/embeddinggemma-2` (~744.4M params) or `google/siglip-so400m` (~430M params).
+- **Disparity Ratio**: External backbones are **50x to 90x larger** than built-in encoders, and up to **3x larger than the LLM itself** (745M vs 221.4M).
+
+### Why Built-in ~8.4M is "Too Small" for General VQA & OCR
+- **High-Entropy Continuous Signals**: Unlike language where words are high-density discrete symbols, visual inputs are continuous, noisy 2D pixel matrices.
+- **Representational Capacity**: Encoding fine-grained spatial layouts, text glyphs (OCR), chart semantics, and broad visual world knowledge requires extensive parameter capacity (minimum ~100M–400M parameters).
+- **Industry Precedent (Asymmetric Multimodal SLMs)**:
+  - **SmolVLM** [Hugging Face, 2024]: Pairs a 135M/360M text LLM with a **430M SigLIP-SO400M** vision encoder. The vision encoder is deliberately larger than the language model because visual grounding demands higher perceptual bandwidth.
+  - **PaliGemma** [Google, 2024]: Pairs a 400M SigLIP with a 2B Gemma.
+  - **Moondream2** [Vikhyat, 2024]: Employs SigLIP (~100M–400M) for high-fidelity scene perception.
+
+### The True Purpose of Jerboa's Dual-Track Design
+1. **Track A — Built-in ViT-Nano (~8.4M) & Audio (~3.2M)**:
+   - **Local End-to-End Feasibility**: Allows end-to-end forward/backward passes and architectural unit tests on Apple Silicon (MPS) without downloading 3GB+ external weights or risking OOM.
+   - **Extreme Edge / Embedded Deployment**: For strictly constrained devices (e.g. smartwatches or IoT with <500MB total VRAM), LLM (221M) + ViT (8.4M) fits entirely into memory.
+   - **Architecture Prototyping**: Validates token projection and 2x2 spatial downsampling ($196 \rightarrow 49$ tokens) mechanics.
+2. **Track B — Frozen Foundation Backbone (EmbeddingGemma-2 / SigLIP)**:
+   - **Modality Adaptation Paradigm**: Exploits pre-trained visual knowledge trained on billions of images (LAION, WebLI).
+   - **Zero Pre-training Overhead**: The 745M backbone remains frozen (`freeze=True`). Training only updates the 2-layer MLP projector (`VisionProjector`, ~2–3MB), requiring negligible VRAM and only a few hours of compute on a single GPU.
+
