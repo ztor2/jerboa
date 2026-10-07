@@ -74,7 +74,9 @@ All training pipelines support **YAML recipes** (`recipes/*.yaml`) so hyperparam
 
 | Shortcut | Pipeline | Default Recipe |
 | :--- | :--- | :--- |
-| `make pretrain` | Rolling-buffer pre-training | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
+| `make pretrain` | Rolling-buffer pre-training (MPS / Single GPU) | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
+| `make pretrain-fast` | High-throughput pre-training (batch=8) | [`recipes/pretrain_fast.yaml`](file:///Users/jc/jerboa/recipes/pretrain_fast.yaml) |
+| `make pretrain-ddp` | Distributed Multi-GPU pre-training (`torchrun`, GPUS=2) | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
 | `make sft` | Supervised fine-tuning (ChatML) | [`recipes/sft.yaml`](file:///Users/jc/jerboa/recipes/sft.yaml) |
 | `make dpo` | Direct preference optimization | [`recipes/dpo.yaml`](file:///Users/jc/jerboa/recipes/dpo.yaml) |
 | `make grpo` | Group relative policy optimization | [`recipes/grpo.yaml`](file:///Users/jc/jerboa/recipes/grpo.yaml) |
@@ -106,8 +108,14 @@ flowchart LR
 - **In-Memory / File Modes**: `--mode stream` (0 MB disk) or `--text_file <path>`.
 
 ```bash
-# Default rolling buffer pre-training
+# Default rolling buffer pre-training (MPS / Single GPU)
 python pipeline/pretrain.py --chunks 5 --docs_per_chunk 500 --steps_per_chunk 15
+
+# Multi-GPU Distributed Training (RunPod / 2x RTX 3090 / 2x RTX 5090)
+make pretrain-ddp GPUS=2
+
+# Custom batch size on dual GPUs
+make pretrain-ddp GPUS=2 RECIPE=recipes/pretrain.yaml BATCH_SIZE=16
 
 # Pre-train with live W&B tracking
 python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"

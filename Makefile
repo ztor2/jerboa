@@ -9,7 +9,8 @@ PRIVATE ?= 0
 DRY_RUN ?= 0
 RESUME ?=
 CAFFEINATE ?= $(shell command -v caffeinate 2>/dev/null)
-RUNNER ?= $(if $(CAFFEINATE),caffeinate -i -s -m,)
+TORCHRUN := $(PYTHON) -m torch.distributed.run --master_addr=127.0.0.1
+GPUS ?= 2
 
 help:
 	@echo "======================================================================"
@@ -17,6 +18,7 @@ help:
 	@echo "======================================================================"
 	@echo "  make pretrain         - Run Pre-training (balanced multitasking mode, recipes/pretrain.yaml)"
 	@echo "  make pretrain-fast    - Run High-Throughput Pre-training (dedicated mode, batch=8, recipes/pretrain_fast.yaml)"
+	@echo "  make pretrain-ddp     - Run Distributed Multi-GPU Pre-training (GPUS=2, torchrun)"
 	@echo "  make sft              - Run Supervised Fine-Tuning (RESUME=auto supported)"
 	@echo "  make dpo              - Run Direct Preference Optimization (recipes/dpo.yaml)"
 	@echo "  make grpo             - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
@@ -33,6 +35,9 @@ pretrain:
 
 pretrain-fast:
 	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain_fast.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+pretrain-ddp:
+	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 sft:
 	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)

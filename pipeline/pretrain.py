@@ -43,6 +43,8 @@ try:
 except ImportError:
     load_dataset = None
 from torch.utils.data import DataLoader, Dataset, IterableDataset
+from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 from tqdm import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
@@ -54,6 +56,35 @@ from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, Sy
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
 METRICS_LOG = os.path.join(MANIFEST_DIR, "training_metrics.jsonl")
+
+
+def setup_distributed() -> Dict:
+    """Detects and initializes PyTorch Distributed (DDP) if launched via torchrun."""
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    rank = int(os.environ.get("RANK", "0"))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    is_distributed = world_size > 1
+
+    if is_distributed and not dist.is_initialized():
+        if torch.cuda.is_available():
+            torch.cuda.set_device(local_rank)
+            backend = "nccl"
+        else:
+            backend = "gloo"
+        dist.init_process_group(backend=backend)
+
+    return {
+        "is_distributed": is_distributed,
+        "world_size": world_size,
+        "rank": rank,
+        "local_rank": local_rank,
+    }
+
+
+def cleanup_distributed(dist_info: Dict):
+    """Clean up distributed process group upon training completion."""
+    if dist_info.get("is_distributed", False) and dist.is_initialized():
+        dist.destroy_process_group()
 
 
 def compute_file_sha256(filepath: str) -> str:
@@ -239,15 +270,25 @@ def run_pretrain(
     wandb_run_name: Optional[str] = None,
 ):
     """Unified pre-training entry point."""
-    os.makedirs(output_dir, exist_ok=True)
-    device = get_device()
-    hw_name = torch.cuda.get_device_name(0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
-    print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}) [Mode: {mode.upper()}] ===")
+    dist_info = setup_distributed()
+    is_main_process = (dist_info["rank"] == 0)
+
+    if dist_info["is_distributed"] and torch.cuda.is_available():
+        device = torch.device(f"cuda:{dist_info['local_rank']}")
+    else:
+        device = get_device()
+
+    if is_main_process:
+        os.makedirs(output_dir, exist_ok=True)
+        hw_name = torch.cuda.get_device_name(dist_info['local_rank'] if torch.cuda.is_available() else 0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
+        ddp_note = f" [DDP World Size: {dist_info['world_size']}]" if dist_info["is_distributed"] else ""
+        print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}){ddp_note} [Mode: {mode.upper()}] ===")
 
     tokenizer = get_default_tokenizer()
 
     sleep_guard = SleepGuard()
-    sleep_guard.start()
+    if is_main_process:
+        sleep_guard.start()
     interrupt_handler = GracefulInterruptHandler()
     resource_guard = SystemResourceGuard(
         max_mps_fraction=max_mem_fraction,
@@ -287,9 +328,11 @@ def run_pretrain(
             stream_cursor = st.get("stream_cursor", 0)
             cumulative_tokens = st.get("cumulative_tokens", 0)
             global_step = st.get("global_step", 0)
-            print(f"Resumed from state: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Tokens: {cumulative_tokens:,}")
+            if is_main_process:
+                print(f"Resumed from state: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Tokens: {cumulative_tokens:,}")
         else:
-            print(f"Loading weights from checkpoint '{resume_path}'...")
+            if is_main_process:
+                print(f"Loading weights from checkpoint '{resume_path}'...")
             model = JerboaForCausalLM.from_pretrained(resume_path)
             resume_dir = resume_path
             ckpt_st_path = os.path.join(resume_path, "training_state.json")
@@ -301,8 +344,13 @@ def run_pretrain(
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
     else:
+        if dist_info["is_distributed"]:
+            torch.manual_seed(42)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(42)
         mtp_status = "Enabled (t -> t+2)" if enable_mtp else "Disabled"
-        print(f"Initializing new JerboaLM (138M params, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
+        if is_main_process:
+            print(f"Initializing new JerboaLM (138M params, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
         config = JerboaConfig(
             vocab_size=len(tokenizer),
             hidden_size=768,
@@ -317,8 +365,15 @@ def run_pretrain(
         model = JerboaForCausalLM(config)
 
     model.to(device)
+    if dist_info["is_distributed"]:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model,
+            device_ids=[dist_info["local_rank"]] if device.type == "cuda" else None,
+            output_device=dist_info["local_rank"] if device.type == "cuda" else None,
+            find_unused_parameters=False,
+        )
 
-    if use_wandb:
+    if use_wandb and is_main_process:
         if not WANDB_AVAILABLE:
             print("[Warning] wandb is not installed. Falling back to local logging.")
             use_wandb = False
@@ -383,16 +438,32 @@ def run_pretrain(
         for chunk_idx in range(start_chunk, start_chunk + total_chunks):
             resource_guard.check_and_throttle()
             chunk_name = f"chunk_{chunk_idx:04d}"
-            print(f"\n==================================================")
-            print(f"  PROCESSING {chunk_name.upper()} (Offset: {stream_cursor:,})")
-            print(f"==================================================")
+            if is_main_process:
+                print(f"\n==================================================")
+                print(f"  PROCESSING {chunk_name.upper()} (Offset: {stream_cursor:,})")
+                print(f"==================================================")
 
-            chunk_meta = download_chunk_with_cursor(
-                output_path=temp_chunk_path,
-                skip_docs=stream_cursor,
-                target_docs=docs_per_chunk,
-                min_score=min_score,
-            )
+            if dist_info["is_distributed"]:
+                if is_main_process:
+                    chunk_meta = download_chunk_with_cursor(
+                        output_path=temp_chunk_path,
+                        skip_docs=stream_cursor,
+                        target_docs=docs_per_chunk,
+                        min_score=min_score,
+                    )
+                    with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
+                        json.dump(chunk_meta, f)
+                dist.barrier()
+                if not is_main_process:
+                    with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
+                        chunk_meta = json.load(f)
+            else:
+                chunk_meta = download_chunk_with_cursor(
+                    output_path=temp_chunk_path,
+                    skip_docs=stream_cursor,
+                    target_docs=docs_per_chunk,
+                    min_score=min_score,
+                )
 
             stream_cursor = chunk_meta["end_offset"]
             chunk_tokens = chunk_meta["approx_tokens"]
@@ -402,11 +473,24 @@ def run_pretrain(
                 text_file=temp_chunk_path,
                 tokenizer=tokenizer,
             )
-            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            if dist_info["is_distributed"]:
+                sampler = DistributedSampler(
+                    dataset,
+                    num_replicas=dist_info["world_size"],
+                    rank=dist_info["rank"],
+                    shuffle=True,
+                    drop_last=False,
+                )
+                sampler.set_epoch(chunk_idx)
+                dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+            else:
+                dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
             total_batches = len(dataloader)
             effective_chunk_steps = max(total_batches // grad_accum_steps, 1)
 
-            print(f"[{chunk_name}] Loaded {len(dataset):,} sequences ({chunk_tokens:,} tokens). Total optimizer steps: {effective_chunk_steps}")
+            if is_main_process:
+                print(f"[{chunk_name}] Loaded {len(dataset):,} sequences ({chunk_tokens:,} tokens). Total optimizer steps: {effective_chunk_steps}")
 
             model.train()
             chunk_start_time = time.time()
@@ -415,7 +499,7 @@ def run_pretrain(
             accum_count = 0
             step_in_chunk = 0
 
-            pbar = tqdm(total=effective_chunk_steps, desc=f"Training {chunk_name}")
+            pbar = tqdm(total=effective_chunk_steps, desc=f"Training {chunk_name}", disable=not is_main_process)
 
             # Automatic Mixed Precision for NVIDIA CUDA (BF16 Tensor Cores), no-op on MPS
             autocast_context = (
@@ -453,77 +537,83 @@ def run_pretrain(
                     elapsed = time.time() - chunk_start_time
                     tokens_processed = int((batch_idx + 1) / total_batches * chunk_tokens)
                     cur_tokens = cumulative_tokens + tokens_processed
-                    tok_per_sec = tokens_processed / max(elapsed, 1e-4)
+                    tok_per_sec = (tokens_processed * dist_info["world_size"]) / max(elapsed, 1e-4)
 
-                    pbar.set_postfix({
-                        "loss": f"{cur_step_loss:.4f}",
-                        "speed": f"{tok_per_sec:.0f} tok/s",
-                        "lr": f"{scheduler.get_last_lr()[0]:.2e}",
-                    })
-                    pbar.update(1)
-
-                    log_metrics_record({
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "global_step": global_step,
-                        "chunk": chunk_name,
-                        "loss": round(cur_step_loss, 4),
-                        "perplexity": round(float(torch.exp(torch.tensor(cur_step_loss))), 2),
-                        "lr": scheduler.get_last_lr()[0],
-                        "tokens_per_sec": round(tok_per_sec, 1),
-                        "cumulative_tokens": cur_tokens,
-                    })
-
-                    if use_wandb:
-                        wandb.log({
-                            "train/loss": cur_step_loss,
-                            "train/perplexity": float(torch.exp(torch.tensor(cur_step_loss))),
-                            "train/lr": scheduler.get_last_lr()[0],
-                            "train/tokens_per_sec": tok_per_sec,
-                            "train/cumulative_tokens": cur_tokens,
-                            "global_step": global_step,
+                    if is_main_process:
+                        pbar.set_postfix({
+                            "loss": f"{cur_step_loss:.4f}",
+                            "speed": f"{tok_per_sec:.0f} tok/s",
+                            "lr": f"{scheduler.get_last_lr()[0]:.2e}",
                         })
+                        pbar.update(1)
+
+                        log_metrics_record({
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "global_step": global_step,
+                            "chunk": chunk_name,
+                            "loss": round(cur_step_loss, 4),
+                            "perplexity": round(float(torch.exp(torch.tensor(cur_step_loss))), 2),
+                            "lr": scheduler.get_last_lr()[0],
+                            "tokens_per_sec": round(tok_per_sec, 1),
+                            "cumulative_tokens": cur_tokens,
+                        })
+
+                        if use_wandb:
+                            wandb.log({
+                                "train/loss": cur_step_loss,
+                                "train/perplexity": float(torch.exp(torch.tensor(cur_step_loss))),
+                                "train/lr": scheduler.get_last_lr()[0],
+                                "train/tokens_per_sec": tok_per_sec,
+                                "train/cumulative_tokens": cur_tokens,
+                                "global_step": global_step,
+                            })
 
                     running_loss = 0.0
                     accum_count = 0
 
                 # Graceful Interrupt Handling
                 if interrupt_handler.interrupted:
-                    print(f"\n[Interrupt] Saving emergency pretrain checkpoint for {chunk_name} at step {step_in_chunk + 1}...")
-                    interrupted_dir = os.path.join(output_dir, "steps", f"interrupted_{chunk_name}")
-                    os.makedirs(interrupted_dir, exist_ok=True)
-                    model.save_pretrained(interrupted_dir)
-                    tokenizer.save_pretrained(interrupted_dir)
-                    cur_tokens = cumulative_tokens + int((step_in_chunk / max(steps_per_chunk, 1)) * chunk_tokens)
-                    training_state = {
-                        "last_completed_chunk": f"interrupted_{chunk_name}",
-                        "next_chunk_idx": chunk_idx,
-                        "global_step": global_step,
-                        "stream_cursor": stream_cursor,
-                        "cumulative_tokens": cur_tokens,
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "is_interrupted": True,
-                    }
-                    with open(os.path.join(interrupted_dir, "training_state.json"), "w", encoding="utf-8") as f:
-                        json.dump(training_state, f, indent=2)
-                    with open(state_file, "w", encoding="utf-8") as f:
-                        json.dump(training_state, f, indent=2)
+                    if is_main_process:
+                        print(f"\n[Interrupt] Saving emergency pretrain checkpoint for {chunk_name} at step {step_in_chunk + 1}...")
+                        interrupted_dir = os.path.join(output_dir, "steps", f"interrupted_{chunk_name}")
+                        os.makedirs(interrupted_dir, exist_ok=True)
+                        raw_model = model.module if hasattr(model, "module") else model
+                        raw_model.save_pretrained(interrupted_dir)
+                        tokenizer.save_pretrained(interrupted_dir)
+                        cur_tokens = cumulative_tokens + int((step_in_chunk / max(effective_chunk_steps, 1)) * chunk_tokens)
+                        training_state = {
+                            "last_completed_chunk": f"interrupted_{chunk_name}",
+                            "next_chunk_idx": chunk_idx,
+                            "global_step": global_step,
+                            "stream_cursor": stream_cursor,
+                            "cumulative_tokens": cur_tokens,
+                            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "is_interrupted": True,
+                        }
+                        with open(os.path.join(interrupted_dir, "training_state.json"), "w", encoding="utf-8") as f:
+                            json.dump(training_state, f, indent=2)
+                        with open(state_file, "w", encoding="utf-8") as f:
+                            json.dump(training_state, f, indent=2)
 
-                    pt_state = {
-                        "optimizer_state": optimizer.state_dict(),
-                        "scheduler_state": scheduler.state_dict(),
-                        "global_step": global_step,
-                        "chunk_idx": chunk_idx,
-                        "stream_cursor": stream_cursor,
-                        "cumulative_tokens": cur_tokens,
-                    }
-                    torch.save(pt_state, os.path.join(interrupted_dir, "training_state.pt"))
-                    torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
-                    print(f"[Interrupt] Safely saved to '{interrupted_dir}'. Pre-training paused.")
-                    print(f"[Interrupt] Resume anytime with: python pipeline/pretrain.py --resume auto")
-                    if use_wandb:
-                        wandb.finish()
-                    sleep_guard.stop()
+                        pt_state = {
+                            "optimizer_state": optimizer.state_dict(),
+                            "scheduler_state": scheduler.state_dict(),
+                            "global_step": global_step,
+                            "chunk_idx": chunk_idx,
+                            "stream_cursor": stream_cursor,
+                            "cumulative_tokens": cur_tokens,
+                        }
+                        torch.save(pt_state, os.path.join(interrupted_dir, "training_state.pt"))
+                        torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
+                        print(f"[Interrupt] Safely saved to '{interrupted_dir}'. Pre-training paused.")
+                        print(f"[Interrupt] Resume anytime with: python pipeline/pretrain.py --resume auto")
+                        if use_wandb:
+                            wandb.finish()
+                        sleep_guard.stop()
                     pbar.close()
+                    if dist_info["is_distributed"]:
+                        dist.barrier()
+                        cleanup_distributed(dist_info)
                     return interrupted_dir
 
             pbar.close()
@@ -531,67 +621,74 @@ def run_pretrain(
             chunk_elapsed = time.time() - chunk_start_time
             avg_chunk_loss = sum(chunk_losses) / max(len(chunk_losses), 1)
 
-            if use_wandb:
-                wandb.log({
-                    "chunk/avg_loss": avg_chunk_loss,
-                    "chunk/elapsed_sec": chunk_elapsed,
-                    "chunk/tokens": chunk_tokens,
+            if is_main_process:
+                if use_wandb:
+                    wandb.log({
+                        "chunk/avg_loss": avg_chunk_loss,
+                        "chunk/elapsed_sec": chunk_elapsed,
+                        "chunk/tokens": chunk_tokens,
+                        "global_step": global_step,
+                    })
+
+                print(f"\n[{chunk_name}] Completed {step_in_chunk} steps ({chunk_tokens:,} tokens) | Avg Loss: {avg_chunk_loss:.4f} | Time: {chunk_elapsed:.1f}s")
+
+                steps_dir = os.path.join(output_dir, "steps")
+                os.makedirs(steps_dir, exist_ok=True)
+                ckpt_dir = os.path.join(steps_dir, chunk_name)
+                raw_model = model.module if hasattr(model, "module") else model
+                raw_model.save_pretrained(ckpt_dir)
+                tokenizer.save_pretrained(ckpt_dir)
+
+                training_state = {
+                    "last_completed_chunk": chunk_name,
+                    "next_chunk_idx": chunk_idx + 1,
                     "global_step": global_step,
+                    "stream_cursor": stream_cursor,
+                    "cumulative_tokens": cumulative_tokens,
+                    "avg_loss": round(avg_chunk_loss, 4),
+                    "sha256": chunk_meta["sha256"],
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                with open(os.path.join(ckpt_dir, "training_state.json"), "w", encoding="utf-8") as f:
+                    json.dump(training_state, f, indent=2)
+
+                with open(state_file, "w", encoding="utf-8") as f:
+                    json.dump(training_state, f, indent=2)
+
+                pt_state = {
+                    "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
+                    "global_step": global_step,
+                    "chunk_idx": chunk_idx + 1,
+                    "stream_cursor": stream_cursor,
+                    "cumulative_tokens": cumulative_tokens,
+                }
+                torch.save(pt_state, os.path.join(ckpt_dir, "training_state.pt"))
+                torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
+
+                log_lineage_record({
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "chunk_id": chunk_name,
+                    "source": "HuggingFaceFW/fineweb-edu:sample-10BT",
+                    "document_range": f"{chunk_meta['start_offset']}..{chunk_meta['end_offset']}",
+                    "doc_count": chunk_meta["document_count"],
+                    "tokens_in_chunk": chunk_tokens,
+                    "cumulative_tokens": cumulative_tokens,
+                    "sha256_hash": chunk_meta["sha256"],
+                    "initial_loss": round(chunk_losses[0], 4) if chunk_losses else None,
+                    "final_loss": round(chunk_losses[-1], 4) if chunk_losses else None,
+                    "checkpoint_saved": ckpt_dir,
+                    "status": "raw_data_deleted",
                 })
 
-            print(f"\n[{chunk_name}] Completed {step_in_chunk} steps ({chunk_tokens:,} tokens) | Avg Loss: {avg_chunk_loss:.4f} | Time: {chunk_elapsed:.1f}s")
+                if os.path.exists(temp_chunk_path):
+                    os.remove(temp_chunk_path)
+                    print(f"Reclaimed disk space: deleted ephemeral file '{temp_chunk_path}'")
+                if os.path.exists(temp_chunk_path + ".meta.json"):
+                    os.remove(temp_chunk_path + ".meta.json")
 
-            steps_dir = os.path.join(output_dir, "steps")
-            os.makedirs(steps_dir, exist_ok=True)
-            ckpt_dir = os.path.join(steps_dir, chunk_name)
-            model.save_pretrained(ckpt_dir)
-            tokenizer.save_pretrained(ckpt_dir)
-
-            training_state = {
-                "last_completed_chunk": chunk_name,
-                "next_chunk_idx": chunk_idx + 1,
-                "global_step": global_step,
-                "stream_cursor": stream_cursor,
-                "cumulative_tokens": cumulative_tokens,
-                "avg_loss": round(avg_chunk_loss, 4),
-                "sha256": chunk_meta["sha256"],
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            with open(os.path.join(ckpt_dir, "training_state.json"), "w", encoding="utf-8") as f:
-                json.dump(training_state, f, indent=2)
-
-            with open(state_file, "w", encoding="utf-8") as f:
-                json.dump(training_state, f, indent=2)
-
-            pt_state = {
-                "optimizer_state": optimizer.state_dict(),
-                "scheduler_state": scheduler.state_dict(),
-                "global_step": global_step,
-                "chunk_idx": chunk_idx + 1,
-                "stream_cursor": stream_cursor,
-                "cumulative_tokens": cumulative_tokens,
-            }
-            torch.save(pt_state, os.path.join(ckpt_dir, "training_state.pt"))
-            torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
-
-            log_lineage_record({
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "chunk_id": chunk_name,
-                "source": "HuggingFaceFW/fineweb-edu:sample-10BT",
-                "document_range": f"{chunk_meta['start_offset']}..{chunk_meta['end_offset']}",
-                "doc_count": chunk_meta["document_count"],
-                "tokens_in_chunk": chunk_tokens,
-                "cumulative_tokens": cumulative_tokens,
-                "sha256_hash": chunk_meta["sha256"],
-                "initial_loss": round(chunk_losses[0], 4) if chunk_losses else None,
-                "final_loss": round(chunk_losses[-1], 4) if chunk_losses else None,
-                "checkpoint_saved": ckpt_dir,
-                "status": "raw_data_deleted",
-            })
-
-            if os.path.exists(temp_chunk_path):
-                os.remove(temp_chunk_path)
-                print(f"Reclaimed disk space: deleted ephemeral file '{temp_chunk_path}'")
+            if dist_info["is_distributed"]:
+                dist.barrier()
 
     elif mode == "stream":
         # Pure in-memory streaming (0 MB disk)
@@ -663,7 +760,18 @@ def run_pretrain(
     else:
         # File mode
         dataset = SyntheticOrTextDataset(seq_len=seq_len, text_file=text_file, tokenizer=tokenizer)
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        if dist_info["is_distributed"]:
+            sampler = DistributedSampler(
+                dataset,
+                num_replicas=dist_info["world_size"],
+                rank=dist_info["rank"],
+                shuffle=True,
+                drop_last=False,
+            )
+            dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+        else:
+            dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
         optimizer, scheduler = create_optimizer_and_scheduler(
             model=model, learning_rate=lr, weight_decay=0.05, total_steps=max_steps, warmup_steps=10
         )
@@ -703,9 +811,9 @@ def run_pretrain(
                 optimizer.zero_grad()
                 step += 1
 
-                if step % 5 == 0 or step == max_steps:
+                if is_main_process and (step % 5 == 0 or step == max_steps):
                     elapsed = time.time() - start_time
-                    tok_per_sec = (step * batch_size * grad_accum_steps * seq_len) / max(elapsed, 1e-4)
+                    tok_per_sec = (step * batch_size * grad_accum_steps * seq_len * dist_info["world_size"]) / max(elapsed, 1e-4)
                     cur_loss = running_loss / accum_count
                     print(f"Step {step:3d}/{max_steps} | Loss: {cur_loss:.4f} | Speed: {tok_per_sec:.1f} tok/s")
                     log_metrics_record({
@@ -729,16 +837,25 @@ def run_pretrain(
                 running_loss = 0.0
                 accum_count = 0
 
-    if use_wandb:
-        wandb.finish()
+    if is_main_process:
+        if use_wandb:
+            wandb.finish()
 
-    sleep_guard.stop()
+        sleep_guard.stop()
 
-    # 3. Base model save to checkpoints/pretrain/model
-    final_path = os.path.join(output_dir, "model")
-    model.save_pretrained(final_path)
-    tokenizer.save_pretrained(final_path)
-    print(f"\nPre-training completed! Base model saved to '{final_path}'")
+        # 3. Base model save to checkpoints/pretrain/model
+        final_path = os.path.join(output_dir, "model")
+        raw_model = model.module if hasattr(model, "module") else model
+        raw_model.save_pretrained(final_path)
+        tokenizer.save_pretrained(final_path)
+        print(f"\nPre-training completed! Base model saved to '{final_path}'")
+    else:
+        final_path = os.path.join(output_dir, "model")
+
+    if dist_info["is_distributed"]:
+        dist.barrier()
+        cleanup_distributed(dist_info)
+
     return final_path
 
 
