@@ -25,7 +25,7 @@ from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.multimodal import JerboaVLForConditionalGeneration
 from model.tokenizer import get_default_tokenizer
-from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, get_device
 
 # Example reasoning prompts for GRPO
 SAMPLE_PROMPTS = [
@@ -111,8 +111,9 @@ def run_grpo(
     multimodal: bool = False,
 ):
     os.makedirs(output_dir, exist_ok=True)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'}) | Multimodal: {multimodal}")
+    device = get_device()
+    hw_name = torch.cuda.get_device_name(0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
+    print(f"Using device: {device} ({hw_name}) | Multimodal: {multimodal}")
 
     tokenizer = get_default_tokenizer(model_path if model_path and os.path.exists(model_path) else None)
 

@@ -48,7 +48,7 @@ from transformers import get_cosine_schedule_with_warmup
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
-from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, SystemResourceGuard
+from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, SystemResourceGuard, get_device
 
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
@@ -239,8 +239,9 @@ def run_pretrain(
 ):
     """Unified pre-training entry point."""
     os.makedirs(output_dir, exist_ok=True)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"=== JerboaLM Unified Pre-training on {device} (Mode: {mode.upper()}) ===")
+    device = get_device()
+    hw_name = torch.cuda.get_device_name(0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
+    print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}) [Mode: {mode.upper()}] ===")
 
     tokenizer = get_default_tokenizer()
 
@@ -415,12 +416,21 @@ def run_pretrain(
 
             pbar = tqdm(total=effective_chunk_steps, desc=f"Training {chunk_name}")
 
+            # Automatic Mixed Precision for NVIDIA CUDA (BF16 Tensor Cores), no-op on MPS
+            autocast_context = (
+                torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                if device.type == "cuda" and torch.cuda.is_bf16_supported()
+                else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+            )
+
             for batch_idx, batch in enumerate(dataloader):
                 input_ids = batch["input_ids"].to(device)
                 labels = batch["labels"].to(device)
 
-                outputs = model(input_ids=input_ids, labels=labels)
-                loss = outputs.loss / grad_accum_steps
+                with autocast_context:
+                    outputs = model(input_ids=input_ids, labels=labels)
+                    loss = outputs.loss / grad_accum_steps
+
                 loss.backward()
 
                 running_loss += outputs.loss.item()
@@ -596,11 +606,18 @@ def run_pretrain(
         accum_count = 0
         start_time = time.time()
 
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if device.type == "cuda" and torch.cuda.is_bf16_supported()
+            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+        )
+
         for batch in dataloader:
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
-            outputs = model(input_ids=input_ids, labels=labels)
-            loss = outputs.loss / grad_accum_steps
+            with autocast_context:
+                outputs = model(input_ids=input_ids, labels=labels)
+                loss = outputs.loss / grad_accum_steps
             loss.backward()
 
             running_loss += loss.item() * grad_accum_steps
@@ -656,6 +673,12 @@ def run_pretrain(
         start_time = time.time()
         data_iter = iter(dataloader)
 
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+            if device.type == "cuda" and torch.cuda.is_bf16_supported()
+            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+        )
+
         while step < max_steps:
             try:
                 batch = next(data_iter)
@@ -665,8 +688,9 @@ def run_pretrain(
 
             input_ids = batch["input_ids"].to(device)
             labels = batch["labels"].to(device)
-            outputs = model(input_ids=input_ids, labels=labels)
-            loss = outputs.loss / grad_accum_steps
+            with autocast_context:
+                outputs = model(input_ids=input_ids, labels=labels)
+                loss = outputs.loss / grad_accum_steps
             loss.backward()
             running_loss += loss.item() * grad_accum_steps
             accum_count += 1

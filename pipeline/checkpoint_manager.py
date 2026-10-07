@@ -11,6 +11,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import torch
 
 
+def get_device() -> torch.device:
+    """Select the optimal device available: CUDA (NVIDIA) -> MPS (Apple Silicon) -> CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 class SleepGuard:
     """Prevents macOS from entering sleep mode while training is active."""
 
@@ -119,7 +128,9 @@ class SystemResourceGuard:
 
     def check_and_throttle(self) -> bool:
         """Checks current system memory pressure and throttles if memory is constrained."""
-        if torch.backends.mps.is_available():
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif torch.backends.mps.is_available():
             torch.mps.empty_cache()
 
         try:
@@ -127,10 +138,12 @@ class SystemResourceGuard:
             mem = psutil.virtual_memory()
             if mem.percent >= self.system_ram_threshold:
                 print(f"\n[ResourceGuard] High system memory pressure: {mem.percent:.1f}% >= {self.system_ram_threshold}%.")
-                print("[ResourceGuard] Pausing 5s and freeing MPS cache to protect foreground apps...")
+                print("[ResourceGuard] Pausing 5s and freeing GPU cache to protect system...")
                 import gc
                 gc.collect()
-                if torch.backends.mps.is_available():
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif torch.backends.mps.is_available():
                     torch.mps.empty_cache()
                 time.sleep(5.0)
                 return True

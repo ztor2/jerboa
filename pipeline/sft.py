@@ -34,7 +34,7 @@ from torch.utils.data import DataLoader, Dataset
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
-from pipeline.checkpoint_manager import CheckpointManager, GracefulInterruptHandler, SleepGuard
+from pipeline.checkpoint_manager import CheckpointManager, GracefulInterruptHandler, SleepGuard, get_device
 
 DEFAULT_SFT_EXAMPLES = [
     {
@@ -143,8 +143,9 @@ def run_sft(
     wandb_run_name: Optional[str] = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    print(f"Using device: {device} ({'Apple Silicon Metal' if device.type == 'mps' else 'CPU'})")
+    device = get_device()
+    hw_name = torch.cuda.get_device_name(0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
+    print(f"Using device: {device} ({hw_name})")
 
     checkpoint_mgr = CheckpointManager(output_dir=output_dir, max_to_keep=save_total_limit)
     interrupt_handler = GracefulInterruptHandler()
