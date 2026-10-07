@@ -94,9 +94,30 @@ When training multiple disparate distributions (English web, Korean conversation
 
 ## 6. Compute & Hardware Scaling (RTX 5090 Baseline)
 
-### Theoretical Calculation (Chinchilla $6N$ Rule)
+### Theoretical Foundation: Chinchilla Compute-Optimal Scaling Law
+- **Primary Citation**: *Training Compute-Optimal Large Language Models* [Hoffmann et al., DeepMind, NeurIPS 2022] ([arXiv:2203.15556](https://arxiv.org/abs/2203.15556))
+- **Key Discovery**:
+  - Prior scaling hypotheses ([Kaplan et al., OpenAI 2020](https://arxiv.org/abs/2001.08361)) suggested scaling parameters $N$ much faster than training tokens $D$ ($N \propto C^{0.73}, D \propto C^{0.27}$).
+  - DeepMind's Chinchilla experiment demonstrated that model size and data should scale equally in lockstep ($N \propto C^{0.5}, D \propto C^{0.5}$).
+  - For compute-optimal budget $C \approx 6ND$, the empirical golden ratio is:
+    $$D \approx 20 \times N$$
+  - For JerboaLM ($N = 221.4\text{M}$ active parameters):
+    $$D_{\text{optimal}} \approx 221.4\text{M} \times 20 \approx \mathbf{4.43\text{ Billion Tokens}}$$
+
+### Inference-Optimal Over-Training Paradigm
+- **Academic References**:
+  - *LLaMA: Open and Efficient Foundation Language Models* [Touvron et al., Meta 2023] ([arXiv:2302.13971](https://arxiv.org/abs/2302.13971))
+  - *SmolLM: Blazing Fast Small Language Models* [Allal et al., Hugging Face 2024] ([arXiv:2502.02737](https://arxiv.org/abs/2502.02737))
+- **Why JerboaLM Targets 10B Tokens ($D \approx 45 \times N$)**:
+  - Chinchilla optimality assumes a single-objective compute constraint (minimizing *pre-training cost only*).
+  - In real-world deployment, **inference cost is determined entirely by parameter count $N$**, completely independent of training token count $D$.
+  - Over-training small models ($D > 20N$, up to $40N$–$100N$) packs maximal intelligence into a compact memory footprint ($N=221\text{M}$), minimizing serving latency, power, and KV cache memory permanently.
+  - At $\approx 45 \times N$ (10B tokens), JerboaLM extracts peak marginal intelligence while avoiding the severe diminishing returns that occur when over-training past $100N$ on a sub-250M parameter model.
+
+### Hardware Realization & Compute Calculation
 - For $N = 221.4\text{M}$ parameters and $D = 10\text{ Billion tokens}$:
   $$\text{Total Compute} \approx 6 \times (2.214 \times 10^8) \times (10 \times 10^9) \approx \mathbf{1.33 \times 10^{19}\text{ FLOPs}}$$
+
 
 ### Hardware Realization
 - **RTX 5090 Specs**: 32 GB GDDR7 (~1,792 GB/s bandwidth), ~450 TFLOPS BF16 Tensor Core peak.
