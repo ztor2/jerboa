@@ -408,6 +408,7 @@ def run_pretrain(
             print(f"Initializing new JerboaLM ({total_params/1e6:.1f}M params, {config.num_hidden_layers} Layers, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
 
     model.to(device)
+    model.config.use_cache = False
     if gradient_checkpointing:
         model.gradient_checkpointing_enable()
         if is_main_process:
