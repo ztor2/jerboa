@@ -1,6 +1,4 @@
-# JerboaLM Research Notes & Engineering Rationales
-
-This document records the empirical evidence, theoretical foundations, architectural trade-offs, and industry references guiding the design of **JerboaLM (~221.4M / ~228.9M MTP)**.
+# Jerboa Research Notes
 
 ---
 
