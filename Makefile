@@ -68,13 +68,13 @@ upload:
 		$(if $(filter 1 true,$(DRY_RUN)),--dry_run,)
 
 upload-pretrain:
-	$(MAKE) upload STAGE=pretrain
+	$(MAKE) upload STAGE=pretrain REPO=$(or $(REPO),jerboa-base)
 
 upload-sft:
-	$(MAKE) upload STAGE=sft
+	$(MAKE) upload STAGE=sft REPO=$(or $(REPO),jerboa-sft)
 
 upload-dpo:
-	$(MAKE) upload STAGE=dpo
+	$(MAKE) upload STAGE=dpo REPO=$(or $(REPO),jerboa-dpo)
 
 upload-grpo:
-	$(MAKE) upload STAGE=grpo
+	$(MAKE) upload STAGE=grpo REPO=$(or $(REPO),jerboa-grpo)
