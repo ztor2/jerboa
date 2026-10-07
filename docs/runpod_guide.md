@@ -43,13 +43,15 @@ tmux attach -t pretrain
 ```
 
 ### Key Health Metrics
-- **GPU Utilization (`nvidia-smi`)**: 90%–100% compute load.
-- **VRAM Headroom**: ~8 GB to 12 GB / 24 GB (plenty of safety margin).
+- **GPU Utilization (`nvidia-smi`)**: 90%–100% compute load across all GPUs.
+- **VRAM Headroom**: ~10 GB to 13 GB / 24 GB per GPU (over 10 GB safety margin).
 - **Initial Loss**: Starts at $\sim 10.8$ ($-\ln(1/49152)$ theoretical random baseline).
 - **Convergence Target**:
   - Step 100: $\sim 7.0 \rightarrow 5.5$
   - Step 1,000+: $\sim 3.5 \rightarrow 2.8$
-- **Expected Throughput (Single 4090)**: ~45,000 to ~65,000 tokens/sec.
+- **Expected Throughput**:
+  - Single RTX 4090: ~55,000 to ~65,000 tokens/sec.
+  - 2x RTX 4090 DDP: ~110,000 to ~120,000 tokens/sec.
 
 ---
 
@@ -68,10 +70,9 @@ python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml --no_wand
 ```
 
 ### T3: Out Of Memory (OOM)
-Reduce micro-batch size while increasing gradient accumulation to maintain effective batch:
-```bash
-python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml --batch_size 2 --grad_accum 8
-```
+- **Micro-Batch Scaling**: JerboaLM 221M uses `batch_size: 4` and `grad_accum: 4` on 2x 4090 DDP (global batch 32 = 65,536 tokens/step).
+- **Expandable Segments**: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is set in `scripts/start_runpod.sh` to prevent allocator fragmentation.
+- **SDPA FlashAttention**: Custom attention masks are avoided when sequence length <= sliding window so PyTorch SDPA FlashAttention2 remains fully active without storing $O(N^2)$ activations.
 
 ### T4: Pausing & Resuming Training
 - **Pause**: Enter `tmux attach -t pretrain`, press `Ctrl + C` (state saved to `checkpoints/pretrain/`). Then click **Stop Pod** on RunPod dashboard.

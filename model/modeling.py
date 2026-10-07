@@ -245,7 +245,7 @@ class JerboaAttention(nn.Module):
             is_causal = True
 
         # Apply Interleaved Sliding Window Attention (SWA) mask
-        if self.is_sliding and self.sliding_window is not None:
+        if self.is_sliding and self.sliding_window is not None and self.sliding_window < q_len:
             q_pos = torch.arange(past_len, past_len + q_len, device=query_states.device).unsqueeze(1)
             k_pos = torch.arange(0, kv_len, device=key_states.device).unsqueeze(0)
             valid_mask = (k_pos <= q_pos) & (q_pos - k_pos < self.sliding_window)

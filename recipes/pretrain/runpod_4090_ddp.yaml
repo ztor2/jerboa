@@ -16,10 +16,10 @@ chunks: 1000
 docs_per_chunk: 1500
 
 # RunPod 2x 4090 DDP hyperparameters:
-# Micro-batch 8 per GPU, seq_len 2048, grad_accum 2
-# Global batch = 8 * 2 GPUs * 2 accum = 32 sequences (65,536 tokens/step)
-batch_size: 8
-grad_accum: 2
+# Micro-batch 4 per GPU, seq_len 2048, grad_accum 4
+# Global batch = 4 * 2 GPUs * 4 accum = 32 sequences (65,536 tokens/step)
+batch_size: 4
+grad_accum: 4
 seq_len: 2048
 lr: 4.0e-4
 min_lr: 4.0e-5
