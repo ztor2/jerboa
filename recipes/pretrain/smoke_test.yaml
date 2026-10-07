@@ -21,7 +21,7 @@ resume: auto
 enable_mtp: true
 
 # Resource Guardrails
-max_mem_fraction: 0.25
+max_mem_fraction: 0.50
 system_ram_limit: 85.0
 
 # Disable W&B for smoke test

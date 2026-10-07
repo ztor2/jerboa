@@ -52,6 +52,7 @@ from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
 from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, SystemResourceGuard, get_device
+from pipeline.dataset import AIHubDataset, get_aihub_chunk, get_chunk_source
 
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
@@ -268,6 +269,8 @@ def run_pretrain(
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
     wandb_run_name: Optional[str] = None,
+    aihub_dir: Optional[str] = None,
+    interleave_pattern: str = "fineweb,aihub",
 ):
     """Unified pre-training entry point."""
     dist_info = setup_distributed()
@@ -283,6 +286,8 @@ def run_pretrain(
         hw_name = torch.cuda.get_device_name(dist_info['local_rank'] if torch.cuda.is_available() else 0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
         ddp_note = f" [DDP World Size: {dist_info['world_size']}]" if dist_info["is_distributed"] else ""
         print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}){ddp_note} [Mode: {mode.upper()}] ===")
+        if aihub_dir and os.path.exists(aihub_dir):
+            print(f"[Interleaving] Multilingual Alternation Enabled: Pattern '{interleave_pattern}', AI-Hub dir: '{aihub_dir}'")
 
     tokenizer = get_default_tokenizer()
 
@@ -299,6 +304,7 @@ def run_pretrain(
     # 1. Checkpoint resumption or model initialization
     start_chunk = 1
     stream_cursor = 0
+    cursors = {"fineweb": 0, "aihub": 0}
     cumulative_tokens = 0
     global_step = 0
 
@@ -329,10 +335,11 @@ def run_pretrain(
                 resume_dir = os.path.join(output_dir, "model")
             start_chunk = st.get("next_chunk_idx", 1)
             stream_cursor = st.get("stream_cursor", 0)
+            cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0})
             cumulative_tokens = st.get("cumulative_tokens", 0)
             global_step = st.get("global_step", 0)
             if is_main_process:
-                print(f"Resumed from state: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Tokens: {cumulative_tokens:,}")
+                print(f"Resumed from state: Next Chunk {start_chunk}, Cursors: {cursors}, Tokens: {cumulative_tokens:,}")
         elif os.path.isdir(resume_path):
             if is_main_process:
                 print(f"Loading weights from checkpoint '{resume_path}'...")
@@ -344,6 +351,7 @@ def run_pretrain(
                     st = json.load(f)
                 start_chunk = st.get("next_chunk_idx", 1)
                 stream_cursor = st.get("stream_cursor", 0)
+                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0})
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
         else:
@@ -478,34 +486,60 @@ def run_pretrain(
         for chunk_idx in range(start_chunk, start_chunk + total_chunks):
             resource_guard.check_and_throttle()
             chunk_name = f"chunk_{chunk_idx:04d}"
+            chunk_source = get_chunk_source(chunk_idx, interleave_pattern) if (aihub_dir and os.path.exists(aihub_dir)) else "fineweb"
+            current_offset = cursors.get(chunk_source, 0)
             if is_main_process:
                 print(f"\n==================================================")
-                print(f"  PROCESSING {chunk_name.upper()} (Offset: {stream_cursor:,})")
+                print(f"  PROCESSING {chunk_name.upper()} [{chunk_source.upper()}] (Offset: {current_offset:,})")
                 print(f"==================================================")
 
-            if dist_info["is_distributed"]:
-                if is_main_process:
+            if chunk_source == "aihub" and aihub_dir:
+                if dist_info["is_distributed"]:
+                    if is_main_process:
+                        chunk_meta = get_aihub_chunk(
+                            raw_dir=aihub_dir,
+                            output_path=temp_chunk_path,
+                            skip_docs=current_offset,
+                            target_docs=docs_per_chunk,
+                        )
+                        with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
+                            json.dump(chunk_meta, f)
+                    dist.barrier()
+                    if not is_main_process:
+                        with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
+                            chunk_meta = json.load(f)
+                else:
+                    chunk_meta = get_aihub_chunk(
+                        raw_dir=aihub_dir,
+                        output_path=temp_chunk_path,
+                        skip_docs=current_offset,
+                        target_docs=docs_per_chunk,
+                    )
+            else:
+                if dist_info["is_distributed"]:
+                    if is_main_process:
+                        chunk_meta = download_chunk_with_cursor(
+                            output_path=temp_chunk_path,
+                            skip_docs=current_offset,
+                            target_docs=docs_per_chunk,
+                            min_score=min_score,
+                        )
+                        with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
+                            json.dump(chunk_meta, f)
+                    dist.barrier()
+                    if not is_main_process:
+                        with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
+                            chunk_meta = json.load(f)
+                else:
                     chunk_meta = download_chunk_with_cursor(
                         output_path=temp_chunk_path,
-                        skip_docs=stream_cursor,
+                        skip_docs=current_offset,
                         target_docs=docs_per_chunk,
                         min_score=min_score,
                     )
-                    with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
-                        json.dump(chunk_meta, f)
-                dist.barrier()
-                if not is_main_process:
-                    with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
-                        chunk_meta = json.load(f)
-            else:
-                chunk_meta = download_chunk_with_cursor(
-                    output_path=temp_chunk_path,
-                    skip_docs=stream_cursor,
-                    target_docs=docs_per_chunk,
-                    min_score=min_score,
-                )
 
-            stream_cursor = chunk_meta["end_offset"]
+            cursors[chunk_source] = chunk_meta["end_offset"]
+            stream_cursor = cursors.get("fineweb", chunk_meta["end_offset"])
             chunk_tokens = chunk_meta["approx_tokens"]
 
             dataset = SyntheticOrTextDataset(
@@ -684,6 +718,8 @@ def run_pretrain(
                     "next_chunk_idx": chunk_idx + 1,
                     "global_step": global_step,
                     "stream_cursor": stream_cursor,
+                    "cursors": cursors,
+                    "chunk_source": chunk_source,
                     "cumulative_tokens": cumulative_tokens,
                     "avg_loss": round(avg_chunk_loss, 4),
                     "sha256": chunk_meta["sha256"],
@@ -701,6 +737,7 @@ def run_pretrain(
                     "global_step": global_step,
                     "chunk_idx": chunk_idx + 1,
                     "stream_cursor": stream_cursor,
+                    "cursors": cursors,
                     "cumulative_tokens": cumulative_tokens,
                 }
                 torch.save(pt_state, os.path.join(ckpt_dir, "training_state.pt"))
@@ -709,7 +746,7 @@ def run_pretrain(
                 log_lineage_record({
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "chunk_id": chunk_name,
-                    "source": "HuggingFaceFW/fineweb-edu:sample-10BT",
+                    "source": chunk_meta.get("source", "HuggingFaceFW/fineweb-edu:sample-10BT"),
                     "document_range": f"{chunk_meta['start_offset']}..{chunk_meta['end_offset']}",
                     "doc_count": chunk_meta["document_count"],
                     "tokens_in_chunk": chunk_tokens,
@@ -903,6 +940,7 @@ if __name__ == "__main__":
     from pipeline.recipe import apply_recipe
 
     default_recipe = "recipes/pretrain/phase1_base.yaml" if os.path.exists("recipes/pretrain/phase1_base.yaml") else "recipes/pretrain.yaml"
+    parser = argparse.ArgumentParser(description="JerboaLM Unified Pre-training")
     parser.add_argument("--recipe", type=str, default=default_recipe, help="Path to YAML training recipe")
     parser.add_argument("--mode", type=str, default="rolling", choices=["rolling", "stream", "file"], help="Pre-training mode (default: rolling)")
     parser.add_argument("--chunks", type=int, default=3, help="Number of chunks for rolling mode")
@@ -922,6 +960,8 @@ if __name__ == "__main__":
     parser.add_argument("--no_mtp", action="store_false", dest="enable_mtp", help="Disable multi-token prediction")
     parser.add_argument("--max_mem_fraction", type=float, default=0.25, help="Maximum fraction of unified memory allowed for MPS (default: 0.25)")
     parser.add_argument("--system_ram_limit", type=float, default=85.0, help="Pause/throttle training if total system RAM exceeds this percent (default: 85.0)")
+    parser.add_argument("--aihub_dir", type=str, default=None, help="Directory containing AI-Hub raw zip archives")
+    parser.add_argument("--interleave_pattern", type=str, default="fineweb,aihub", help="Chunk alternation pattern (e.g. fineweb,aihub or fineweb,fineweb,aihub)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -948,4 +988,6 @@ if __name__ == "__main__":
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
+        aihub_dir=getattr(args, "aihub_dir", None),
+        interleave_pattern=getattr(args, "interleave_pattern", "fineweb,aihub"),
     )

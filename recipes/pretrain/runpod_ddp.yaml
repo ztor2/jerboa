@@ -6,6 +6,10 @@ source: HuggingFaceFW/fineweb-edu
 subset: sample-10BT
 min_score: 3
 
+# Multilingual Interleaving (Alternating chunk schedule)
+aihub_dir: data/raw/aihub_test
+interleave_pattern: fineweb,aihub
+
 # Compute budget: 1,000 chunks x 1,000 docs (approx 1.5B ~ 2.0B tokens)
 chunks: 1000
 docs_per_chunk: 1000

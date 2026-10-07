@@ -1,6 +1,6 @@
 # JerboaLM Pre-training Data Strategy & Curriculum Plan
 
-This document establishes the dataset portfolio, compute-scaling predictions, and curriculum strategy for pre-training **JerboaLM (~138M parameters)** on local Apple Silicon (MPS) and scalable compute environments.
+This document establishes the dataset portfolio, compute-scaling predictions, and curriculum strategy for pre-training **JerboaLM (~221.4M base / ~228.9M MTP)** with our custom 49,152 bilingual BPE tokenizer across local Apple Silicon (MPS) and cloud GPU environments.
 
 ---
 
@@ -10,56 +10,48 @@ Unlike large foundation models (7B–70B+) that can brute-force learn patterns f
 
 ### Core Principles
 1. **High-Signal Educational & Synthetic Dominance**:
-   Following the empirical breakthroughs of *Textbooks Are All You Need (Phi-1/2)*, *Cosmopedia*, and *SmolLM*, over 70% of the corpus consists of synthetic textbooks, clean tutorials, and filtered educational web content.
-2. **Code as a Reasoning Engine**:
-   Code (especially Python) teaches structured syntax, variable tracking, and step-by-step logic, which directly boosts downstream chain-of-thought and general reasoning capabilities.
-3. **Traceable Rolling Buffer**:
-   Data is processed in cryptographically audited chunks (`SHA-256`), eliminating multi-hundred-gigabyte local disk requirements while maintaining strict lineage logs in `data/manifests/dataset_lineage.jsonl`.
+   Following the empirical breakthroughs of *Textbooks Are All You Need (Phi-1/2)*, *Cosmopedia*, and *SmolLM*, over 60% of English content consists of synthetic textbooks, clean tutorials, and filtered educational web content (`FineWeb-Edu`, score $\ge 3$).
+2. **Native Korean Knowledge & Dialogue Grounding**:
+   Rather than translating English datasets or relying solely on noisy Korean web dumps, JerboaLM incorporates verified **AI-Hub corpora** (Knowledge 71894, Conversational 71908, Pre-training 71898) and colloquial instruction sets (`KoAlpaca`).
+3. **Zero-Extract Archive Streaming & Chunk Alternation**:
+   Data is ingested in cryptographically audited chunks (`SHA-256`) without uncompressing multi-hundred-gigabyte archives to disk. Languages are interleaved through clean **Round-Robin Chunk Alternation** (`FineWeb` $\leftrightarrow$ `AI-Hub`), eliminating catastrophic forgetting without over-engineered multi-threading.
 
 ---
 
 ## 2. Token Budget & Compute Scaling Predictions
 
-JerboaLM configuration: `hidden_size=768, layers=16, heads=12, kv_heads=4, vocab=32768, tie_embeddings=True` $\rightarrow$ **~138M active parameters**.
+JerboaLM configuration: `hidden_size=768, layers=28, heads=12, kv_heads=4, vocab=49152, tie_embeddings=True` $\rightarrow$ **~221.4M base active parameters**.
 
 ### Theoretical vs. Empirical Targets
 
-| Metric | Token Budget | Tokens / Param | Expected Model Capability | Apple Silicon Training Time (Est. @ 10k tok/s) |
+| Metric | Token Budget | Tokens / Param | Expected Model Capability | Training Time (Est. on 2x RTX 5090 DDP) |
 | :--- | :---: | :---: | :--- | :---: |
-| **Phase 0: Smoke Test** | ~50M | ~0.36 | Convergence validation, loss drops from ~10.5 $\rightarrow$ ~5.0 | ~1.4 hours |
-| **Phase 1: Basic Fluency** | **1.0B – 2.0B** | 7.2 – 14.5 | Grammatical coherence, basic sentence completion, clean English generation | ~28 – 55 hours (~1.5–2.5 days) |
-| **Phase 2: Core Competence** | **5.0B – 10.0B** | 36 – 72 | Solid world knowledge, simple reasoning, Python function completion, prime SFT base | ~6 – 12 days |
-| **Phase 3: Production SLM** | **30B – 50B** | 215 – 360 | Competitive with SmolLM-135M / Cosmo-1B benchmarks on MMLU/GSM8k/HumanEval | Cloud / Distributed cluster |
-
-> [!NOTE]
-> **Chinchilla Optimal for 138M** is $20 \times 138\text{M} \approx 2.76\text{B}$ tokens.
-> For SLMs, **overtraining** (up to 30B–50B tokens) is standard industry practice because runtime inference cost is identical while model intelligence continues to scale linearly.
-> **Recommended initial milestone**: **Phase 1 (1.0B ~ 2.0B tokens)** to establish a reliable base model for downstream SFT and RL alignment without burning excessive hardware cycles.
+| **Phase 0: Smoke Test** | ~50M | ~0.23 | Convergence validation, loss drops from ~12.5 $\rightarrow$ ~6.0 | ~10 minutes |
+| **Phase 1: Basic Fluency** | **1.0B – 2.0B** | 4.5 – 9.0 | Grammatical coherence, fluent bilingual generation, clean English/Korean | ~2.5 – 5.0 hours |
+| **Phase 2: Core Competence** | **5.0B – 10.0B** | 22.5 – 45.0 | Solid world knowledge, simple reasoning, Python function completion, prime SFT base | ~12 – 24 hours |
+| **Phase 3: Production SLM** | **30B – 50B** | 135 – 225 | Competitive with SmolLM-135M / Cosmo-1B benchmarks on MMLU/KoBEST | ~3 – 5 days |
 
 ---
 
-## 3. Dataset Portfolio & Specification
+## 3. Dataset Portfolio & Multilingual Mixture
 
-The pre-training corpus is structured into four complementary pillars:
+The pre-training corpus balances English, Korean, and Code logic:
 
 ```mermaid
-pie title JerboaLM 138M Pre-training Data Mixture
-    "Educational Web (FineWeb-Edu)" : 25
-    "Multilingual Web (FineWeb-2 / ko)" : 15
-    "Synthetic Textbooks (Cosmopedia v2)" : 30
-    "Code & Structured Logic (Python-Edu)" : 20
-    "STEM & Knowledge (FineMath / Wiki)" : 10
+pie title JerboaLM 221M Pre-training Data Mixture
+    "English Educational (FineWeb-Edu)" : 50
+    "Korean Knowledge & Dialogue (AI-Hub)" : 35
+    "Code & Structured Logic (Python-Edu / StarCoder)" : 15
 ```
 
 ### Dataset Inventory
 
 | Category | Dataset Name | Source Identifier | Target Proportion | Purpose & Signal Characteristic |
 | :--- | :--- | :--- | :---: | :--- |
-| **Educational Web** | **FineWeb-Edu** | `HuggingFaceFW/fineweb-edu` (`sample-10BT`) | **25%** | Web text filtered by Llama-3-70B classifier for educational value (score $\ge 3$). High linguistic diversity with filtered toxicity. |
-| **Multilingual Web** | **FineWeb-2** | `HuggingFaceFW/fineweb-2` (subset: `en`, `ko`) | **15%** | Modern 20TB multilingual corpus across 1,000+ languages. Provides Korean and global web coverage essential for multilingual competence. |
-| **Synthetic Textbooks** | **Cosmopedia v2** | `HuggingFaceTB/cosmopedia-v2` | **30%** | Synthetic textbooks, courses, and stories generated by Mixtral-8x7B. Dense explanation-to-token ratio; zero web fluff. |
-| **Code & Logic** | **Python-Edu & Stack-Edu** | `HuggingFaceTB/smollm-corpus` (`python-edu`) | **20%** | Educational Python scripts, docstrings, unit tests, and algorithmic solutions. Trains causal dependencies and logic. |
-| **STEM & Knowledge** | **FineMath + Wikipedia** | `HuggingFaceFW/finemath` + `wikimedia/wikipedia` | **10%** | Multi-step mathematical deductions, LaTeX expressions, and encyclopedic factual grounding. |
+| **English Educational** | **FineWeb-Edu** | `HuggingFaceFW/fineweb-edu` (`sample-10BT`) | **50%** | Web text filtered by Llama-3-70B classifier for educational value (score $\ge 3$). High linguistic diversity. |
+| **Korean Knowledge** | **AI-Hub 지식/지능** | AI-Hub `71894` (`annotation.json`) | **20%** | Formal Korean encyclopedic Q&A, scientific concepts, cultural background. |
+| **Korean Dialogue** | **AI-Hub 대화생성형** | AI-Hub `71908` (`annotation_qa`) | **15%** | Natural conversational Korean, multi-turn dialogues, image captions. |
+| **Code & Logic** | **Python-Edu & Stack-Edu** | `flytech/python-codes-25k` & `smollm-corpus` | **15%** | Educational Python scripts, docstrings, unit tests, algorithmic reasoning. |
 
 ### Latest Ecosystem Context & SOTA Model Provenance (SmolLM2 to SmolLM3)
 
