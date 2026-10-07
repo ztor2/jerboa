@@ -12,6 +12,7 @@ from .modeling import (
 )
 from .multimodal import (
     AudioProjector,
+    EmbeddingGemmaVisionEncoder,
     JerboaVLForConditionalGeneration,
     LightweightAudioEncoder,
     LightweightVisionEncoder,

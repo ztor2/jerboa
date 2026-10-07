@@ -97,6 +97,58 @@ class LightweightVisionEncoder(nn.Module):
         return x  # [B, num_patches, embed_dim]
 
 
+class EmbeddingGemmaVisionEncoder(nn.Module):
+    """Vision Encoder wrapper backed by Google DeepMind's EmbeddingGemma 2.
+
+    Extracts rich 768-dimensional visual token representations (256 tokens per image)
+    aligned with Gemma 4's multimodal embedding space.
+    """
+
+    def __init__(self, model_id: str = "google/embeddinggemma-2", freeze: bool = True):
+        super().__init__()
+        from transformers import AutoModel, AutoProcessor
+
+        self.model_id = model_id
+        print(f"[EmbeddingGemma] Loading vision backbone from '{model_id}'...")
+        self.processor = AutoProcessor.from_pretrained(model_id)
+        self.embedding_model = AutoModel.from_pretrained(model_id, dtype=torch.float32)
+
+        if freeze:
+            for p in self.embedding_model.parameters():
+                p.requires_grad = False
+            self.embedding_model.eval()
+
+        self.embed_dim = 768
+
+    def forward(self, images_or_pixel_values) -> torch.Tensor:
+        """Forward images through EmbeddingGemma 2 and extract visual token sequence."""
+        device = next(self.embedding_model.parameters()).device
+        dtype = next(self.embedding_model.parameters()).dtype
+
+        if isinstance(images_or_pixel_values, torch.Tensor):
+            # Already tensor: convert to PIL for processor if needed or pass directly
+            # If standard [B, C, H, W] tensor in [0, 1]
+            from torchvision.transforms.functional import to_pil_image
+            b = images_or_pixel_values.shape[0]
+            pil_images = [to_pil_image(images_or_pixel_values[i].cpu().float()) for i in range(b)]
+            inputs = self.processor(text=["<|image|>"] * b, images=pil_images, return_tensors="pt")
+        elif isinstance(images_or_pixel_values, list):
+            b = len(images_or_pixel_values)
+            inputs = self.processor(text=["<|image|>"] * b, images=images_or_pixel_values, return_tensors="pt")
+        else:
+            inputs = self.processor(text="<|image|>", images=images_or_pixel_values, return_tensors="pt")
+
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.embedding_model(**inputs)
+            # last_hidden_state: [B, 260, 768]
+            # token 0: BOS, 1: BOI, 2..257: 256 visual tokens, 258: EOI, 259: EOS
+            visual_tokens = outputs.last_hidden_state[:, 2:258, :].to(dtype)
+
+        return visual_tokens  # [B, 256, 768]
+
+
 class VisionProjector(nn.Module):
     """Vision-to-Language Projector with 2x2 Spatial Token Compression."""
 
@@ -177,21 +229,31 @@ class JerboaVLForConditionalGeneration(nn.Module):
         config: JerboaConfig,
         vision_encoder: Optional[nn.Module] = None,
         audio_encoder: Optional[nn.Module] = None,
-        vision_dim: int = 384,
+        vision_dim: Optional[int] = None,
         audio_dim: int = 256,
+        use_embedding_gemma: bool = False,
     ):
         super().__init__()
         self.config = config
         self.language_model = JerboaForCausalLM(config)
+        self.use_embedding_gemma = use_embedding_gemma
 
         # Vision Encoder & Projector
-        self.vision_encoder = vision_encoder if vision_encoder is not None else LightweightVisionEncoder(
-            img_size=224, patch_size=16, embed_dim=vision_dim, depth=6
-        )
+        if vision_encoder is not None:
+            self.vision_encoder = vision_encoder
+            effective_v_dim = vision_dim or 384
+        elif use_embedding_gemma:
+            self.vision_encoder = EmbeddingGemmaVisionEncoder(freeze=True)
+            effective_v_dim = 768
+        else:
+            effective_v_dim = vision_dim or 384
+            self.vision_encoder = VisionPatchEmbed(img_size=224, patch_size=16, embed_dim=effective_v_dim)
+
+        # Vision Projector connects 768-dim EmbeddingGemma or ViT to LLM hidden_size (768)
         self.vision_projector = VisionProjector(
-            vision_dim=vision_dim,
+            vision_dim=effective_v_dim,
             llm_dim=config.hidden_size,
-            spatial_merge_size=config.vision_spatial_merge_size,
+            spatial_merge_size=1 if use_embedding_gemma else config.vision_spatial_merge_size,
         )
 
         # Audio Encoder & Projector

@@ -184,11 +184,12 @@ def run_multimodal_training(
     epochs: int = 2,
     batch_size: int = 2,
     lr: float = 5e-4,
+    use_embedding_gemma: bool = False,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = get_device()
     hw_name = torch.cuda.get_device_name(0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
-    print(f"Using device: {device} ({hw_name})")
+    print(f"Using device: {device} ({hw_name}) | EmbeddingGemma: {use_embedding_gemma}")
 
     tokenizer = get_default_tokenizer()
     image_token_id = tokenizer.convert_tokens_to_ids("<|image|>")
@@ -205,10 +206,10 @@ def run_multimodal_training(
         qk_norm=True,
         image_token_id=image_token_id,
         audio_token_id=audio_token_id,
-        vision_spatial_merge_size=2,
+        vision_spatial_merge_size=1 if use_embedding_gemma else 2,
     )
 
-    model = JerboaVLForConditionalGeneration(config)
+    model = JerboaVLForConditionalGeneration(config, use_embedding_gemma=use_embedding_gemma)
     model.to(device)
 
     total_params = sum(p.numel() for p in model.parameters())
@@ -337,6 +338,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
     parser.add_argument("--data", type=str, default=None, help="Path to multimodal JSON dataset")
     parser.add_argument("--output_dir", type=str, default="checkpoints/multimodal")
+    parser.add_argument("--use_embedding_gemma", action="store_true", help="Use Google EmbeddingGemma 2 vision encoder")
     args = parser.parse_args()
     args = apply_recipe(args, "recipes/multimodal.yaml")
 
@@ -348,4 +350,5 @@ if __name__ == "__main__":
         epochs=args.epochs,
         batch_size=args.batch_size,
         lr=args.lr,
+        use_embedding_gemma=getattr(args, "use_embedding_gemma", False),
     )
