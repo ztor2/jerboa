@@ -24,7 +24,7 @@ except ImportError:
 
 try:
     import wandb
-    WANDB_AVAILABLE = True
+    WANDB_AVAILABLE = hasattr(wandb, "init")
 except ImportError:
     WANDB_AVAILABLE = False
 

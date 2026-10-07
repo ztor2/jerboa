@@ -32,7 +32,7 @@ except ImportError:
 
 try:
     import wandb
-    WANDB_AVAILABLE = True
+    WANDB_AVAILABLE = hasattr(wandb, "init")
 except ImportError:
     WANDB_AVAILABLE = False
 
@@ -311,7 +311,10 @@ def run_pretrain(
             resume_path = state_file
         elif os.path.exists(resume):
             resume_path = resume
+        elif "/" in str(resume):
+            resume_path = str(resume)
 
+    model = None
     if resume_path:
         # If path is json state
         if resume_path.endswith(".json"):
@@ -330,7 +333,7 @@ def run_pretrain(
             global_step = st.get("global_step", 0)
             if is_main_process:
                 print(f"Resumed from state: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Tokens: {cumulative_tokens:,}")
-        else:
+        elif os.path.isdir(resume_path):
             if is_main_process:
                 print(f"Loading weights from checkpoint '{resume_path}'...")
             model = JerboaForCausalLM.from_pretrained(resume_path)
@@ -343,7 +346,44 @@ def run_pretrain(
                 stream_cursor = st.get("stream_cursor", 0)
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
-    else:
+        else:
+            # Remote Hugging Face Hub repository (e.g. ztor2/jerboa-base)
+            if is_main_process:
+                print(f"Loading base model weights from Hugging Face Hub: '{resume_path}'...")
+
+            # In DDP, let rank 0 download and cache first
+            if dist_info["is_distributed"] and not is_main_process:
+                dist.barrier()
+
+            try:
+                from huggingface_hub import hf_hub_download
+                model = JerboaForCausalLM.from_pretrained(resume_path)
+
+                st_json_path = hf_hub_download(repo_id=resume_path, filename="training_state.json")
+                with open(st_json_path, "r", encoding="utf-8") as f:
+                    st = json.load(f)
+                start_chunk = st.get("next_chunk_idx", 1)
+                stream_cursor = st.get("stream_cursor", 0)
+                cumulative_tokens = st.get("cumulative_tokens", 0)
+                global_step = st.get("global_step", 0)
+                if is_main_process:
+                    print(f"[Hub Resume] Successfully restored training cursor: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Cumulative Tokens: {cumulative_tokens:,}")
+
+                # Download training_state.pt for optimizer/scheduler momentum
+                try:
+                    st_pt_path = hf_hub_download(repo_id=resume_path, filename="training_state.pt")
+                    resume_dir = os.path.dirname(st_pt_path)
+                except Exception:
+                    pass
+            except Exception as e:
+                if is_main_process:
+                    print(f"[Hub Resume] Notice: Could not load full state from Hub repo '{resume_path}': {e}. Initializing fresh base.")
+                model = None
+
+            if dist_info["is_distributed"] and is_main_process:
+                dist.barrier()
+
+    if model is None:
         if dist_info["is_distributed"]:
             torch.manual_seed(42)
             if torch.cuda.is_available():

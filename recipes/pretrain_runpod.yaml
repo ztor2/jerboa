@@ -1,0 +1,31 @@
+# JerboaLM Pre-training Recipe (RunPod 2x RTX 3090 DDP, 24GB VRAM/GPU)
+# Targets 1.0B token milestone resuming from ztor2/jerboa-base (chunk 95+)
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Compute budget: 670 chunks x ~1,000 docs (1-Epoch per chunk) ≈ 1.0 Billion tokens
+chunks: 670
+docs_per_chunk: 1000
+
+# RunPod 2x 3090 DDP hyperparameters:
+# Micro-batch 16 per GPU, grad_accum 2 -> Global batch = 16 * 2 GPUs * 2 accum = 64 (16,384 tokens/step)
+batch_size: 16
+grad_accum: 2
+seq_len: 256
+lr: 4.0e-4
+
+# Seamless resume from Hugging Face Hub checkpoint
+resume: ztor2/jerboa-base
+enable_mtp: true
+
+# RunPod Linux resource limits (plenty of dedicated VRAM and RAM)
+max_mem_fraction: 0.85
+system_ram_limit: 90.0
+
+# Experiment tracking
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-runpod-2x3090-ddp

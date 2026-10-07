@@ -9,6 +9,7 @@ PRIVATE ?= 0
 DRY_RUN ?= 0
 RESUME ?=
 CAFFEINATE ?= $(shell command -v caffeinate 2>/dev/null)
+RUNNER ?= $(if $(CAFFEINATE),caffeinate -i -s -m,)
 TORCHRUN := $(PYTHON) -m torch.distributed.run --master_addr=127.0.0.1
 GPUS ?= 2
 
@@ -38,6 +39,9 @@ pretrain-fast:
 
 pretrain-ddp:
 	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+pretrain-runpod:
+	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe recipes/pretrain_runpod.yaml $(if $(RESUME),--resume $(RESUME),)
 
 sft:
 	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)
