@@ -52,14 +52,9 @@ echo "[3/4] Installing core requirements from requirements.txt..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4. Optional: FlashAttention-2 installation for Ampere/Ada/Blackwell
-echo "[4/4] Checking GPU for FlashAttention-2..."
-if python3 -c "import torch; assert torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8" 2>/dev/null; then
-    echo "Ampere+ GPU detected (SM >= 8.0). Installing flash-attn for 2x speedup..."
-    pip install flash-attn --no-build-isolation || echo "flash-attn install skipped (fallback to PyTorch SDPA is active)."
-else
-    echo "Non-CUDA or SM < 8.0 environment. PyTorch SDPA will be used natively."
-fi
+# 4. PyTorch Native SDPA & FlashAttention Verification
+echo "[4/4] Verifying PyTorch Native SDPA & FlashAttention..."
+python3 -c "import torch; print(f'[✓] PyTorch SDPA FlashAttention Backend: {torch.backends.cuda.flash_sdp_enabled()}')" 2>/dev/null || true
 
 echo ""
 echo "=== [JerboaLM] Environment Setup Complete! ==="
