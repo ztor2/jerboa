@@ -23,25 +23,12 @@ In Development
 
 | Attribute | Specification |
 | :--- | :--- |
-| **Language Backbone** | `JerboaForCausalLM` (~221.4M base / ~228.9M with MTP) |
-| **Multimodal Model** | `JerboaVLForConditionalGeneration` (~229.8M built-in ViT / ~965.8M with EmbeddingGemma-2) |
-| **Trainable Parameters** | ~221.4M (Base) / ~228.9M (with MTP) |
-| **Layers & Hidden Dim** | 28 Layers (Deep & Thin), $d_{model}=768$, $d_{ffn}=2048$ (SwiGLU) |
-| **Attention Mechanism** | GQA (12 Query : 4 KV Heads), Interleaved SWA (2048 window), QK-Norm |
-| **Tokenizer** | 49,152 vocab Byte-Level BPE (Korean, English, Code, ChatML format) |
-| **Max Context Length** | **8,192 tokens native** ($\theta=500,000.0$, YaRN scalable to **32K ~ 64K**) |
-| **Hardware Target** | Apple Silicon (MPS / Metal) & NVIDIA CUDA (RTX 3090 / 4090 / 5090) |
-| **Active VRAM Usage** | ~885 MB (FP32) / ~445 MB (FP16/BF16) / ~2.1 GB (Multimodal FP16) |
-
----
-
-## Documentation
-
-- [docs/model.md](docs/model.md): Deep & Thin architecture, GQA, SWA, MTP mathematical formulation
-- [docs/tokenizer.md](docs/tokenizer.md): 49k BPE tokenizer architecture, corpus breakdown, fertility benchmarks
-- [docs/research.md](docs/research.md): Empirical design rationales, SOTA precedents (Llama 3, SmolLM, DoReMi)
-- [docs/pretrain_data_plan.md](docs/pretrain_data_plan.md): 10B multilingual token mixture and curriculum strategy
-- [docs/train.md](docs/train.md): Pre-training, SFT, DPO, GRPO, and multimodal pipeline guides
+| **Architecture** | 28 Layers, 768 Hidden, SwiGLU, GQA |
+| **Parameters** | 221M Base / 228M MTP |
+| **Vocabulary** | 49,152 Bilingual BPE |
+| **Context Length** | 8,192 tokens (Extensible to 64K) |
+| **Active Memory** | ~445 MB BF16 |
+| **Target Hardware** | Apple Silicon & NVIDIA CUDA |
 
 ---
 
