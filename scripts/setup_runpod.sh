@@ -17,9 +17,10 @@ else
 fi
 
 # 2. Setup Python Virtual Environment in persistent storage
+# Using --system-site-packages inherits the container's pre-installed PyTorch & CUDA drivers instantly
 if [ ! -d "$VENV_PATH" ]; then
-    echo "[2/4] Creating virtual environment at $VENV_PATH..."
-    python3 -m venv "$VENV_PATH"
+    echo "[2/4] Creating virtual environment at $VENV_PATH (inheriting system PyTorch/CUDA)..."
+    python3 -m venv --system-site-packages "$VENV_PATH"
 else
     echo "[2/4] Existing virtual environment found at $VENV_PATH."
 fi
