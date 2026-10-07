@@ -14,6 +14,7 @@ Alternative Modes:
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -420,7 +421,7 @@ def run_pretrain(
             autocast_context = (
                 torch.autocast(device_type="cuda", dtype=torch.bfloat16)
                 if device.type == "cuda" and torch.cuda.is_bf16_supported()
-                else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+                else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else contextlib.nullcontext())
             )
 
             for batch_idx, batch in enumerate(dataloader):
@@ -609,7 +610,7 @@ def run_pretrain(
         autocast_context = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
             if device.type == "cuda" and torch.cuda.is_bf16_supported()
-            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else contextlib.nullcontext())
         )
 
         for batch in dataloader:
@@ -676,7 +677,7 @@ def run_pretrain(
         autocast_context = (
             torch.autocast(device_type="cuda", dtype=torch.bfloat16)
             if device.type == "cuda" and torch.cuda.is_bf16_supported()
-            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else torch.nullcontext())
+            else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else contextlib.nullcontext())
         )
 
         while step < max_steps:
