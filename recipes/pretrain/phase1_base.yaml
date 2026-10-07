@@ -1,0 +1,34 @@
+# JerboaLM Pre-training Recipe (Phase 1: Foundation Pre-training)
+# Targets 1.0B ~ 2.0B token milestone with 2,048 sequence length
+# 221M Deep & Thin Architecture (28 Layers, 49k BPE Tokenizer, rope_theta 500k)
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Compute budget: 1,000 chunks x 1,000 docs (approx 1.5B ~ 2.0B tokens)
+chunks: 1000
+docs_per_chunk: 1000
+
+# Training hyperparameters (Optimized for Apple Silicon Metal & Single GPUs)
+batch_size: 4
+grad_accum: 4
+seq_len: 2048
+lr: 4.0e-4
+min_lr: 4.0e-5
+warmup_ratio: 0.03
+weight_decay: 0.1
+
+# Fault tolerance & model architecture
+resume: auto
+enable_mtp: true
+
+# Resource Guardrails
+max_mem_fraction: 0.35
+system_ram_limit: 85.0
+
+# Experiment tracking
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-221m-pretrain-phase1

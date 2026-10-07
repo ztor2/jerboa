@@ -17,9 +17,11 @@ help:
 	@echo "======================================================================"
 	@echo "                       JERBOA WORKFLOW RUNNER                         "
 	@echo "======================================================================"
-	@echo "  make pretrain         - Run Pre-training (balanced multitasking mode, recipes/pretrain.yaml)"
-	@echo "  make pretrain-fast    - Run High-Throughput Pre-training (dedicated mode, batch=8, recipes/pretrain_fast.yaml)"
+	@echo "  make pretrain         - Run Phase 1 Foundation Pre-training (seq_len=2048, recipes/pretrain/phase1_base.yaml)"
+	@echo "  make pretrain-long    - Run Phase 2 Long-Context Extension (seq_len=8192, recipes/pretrain/phase2_long.yaml)"
+	@echo "  make pretrain-smoke   - Run Quick Smoke Test (recipes/pretrain/smoke_test.yaml)"
 	@echo "  make pretrain-ddp     - Run Distributed Multi-GPU Pre-training (GPUS=2, torchrun)"
+	@echo "  make pretrain-runpod  - Run RunPod 2x 3090 DDP (recipes/pretrain/runpod_ddp.yaml)"
 	@echo "  make sft              - Run Supervised Fine-Tuning (RESUME=auto supported)"
 	@echo "  make dpo              - Run Direct Preference Optimization (recipes/dpo.yaml)"
 	@echo "  make grpo             - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
@@ -32,16 +34,22 @@ help:
 	@echo "======================================================================"
 
 pretrain:
-	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain.yaml) $(if $(RESUME),--resume $(RESUME),)
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain/phase1_base.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+pretrain-long:
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain/phase2_long.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+pretrain-smoke:
+	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain/smoke_test.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 pretrain-fast:
 	$(RUNNER) $(PYTHON) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain_fast.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 pretrain-ddp:
-	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain.yaml) $(if $(RESUME),--resume $(RESUME),)
+	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe $(or $(RECIPE),recipes/pretrain/runpod_ddp.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 pretrain-runpod:
-	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe recipes/pretrain_runpod.yaml $(if $(RESUME),--resume $(RESUME),)
+	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe recipes/pretrain/runpod_ddp.yaml $(if $(RESUME),--resume $(RESUME),)
 
 sft:
 	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)

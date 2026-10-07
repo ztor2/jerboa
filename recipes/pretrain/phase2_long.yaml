@@ -1,0 +1,34 @@
+# JerboaLM Pre-training Recipe (Phase 2: Long-Context Extension)
+# Continued pre-training with 8,192 native sequence length
+# Focuses on long-form documents, books, code repositories, and technical papers
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 4
+
+# Compute budget: 200 chunks x 500 long docs (approx 200M ~ 300M tokens)
+chunks: 200
+docs_per_chunk: 500
+
+# Training hyperparameters (Optimized for 8K long-context)
+batch_size: 1
+grad_accum: 16
+seq_len: 8192
+lr: 1.0e-4
+min_lr: 1.0e-5
+warmup_ratio: 0.05
+weight_decay: 0.1
+
+# Fault tolerance & model architecture
+resume: auto
+enable_mtp: true
+
+# Long-context memory guardrails
+max_mem_fraction: 0.50
+system_ram_limit: 88.0
+
+# Experiment tracking
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-221m-pretrain-phase2-8k

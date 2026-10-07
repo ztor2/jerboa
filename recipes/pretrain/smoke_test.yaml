@@ -1,0 +1,28 @@
+# JerboaLM Pre-training Recipe (Quick Smoke Test / Local Verification)
+# Minimal lightweight run for pipeline debugging and instant verification
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Compute budget: 2 chunks x 20 docs
+chunks: 2
+docs_per_chunk: 20
+
+# Fast local test parameters
+batch_size: 2
+grad_accum: 2
+seq_len: 256
+lr: 4.0e-4
+
+# Fault tolerance & model architecture
+resume: auto
+enable_mtp: true
+
+# Resource Guardrails
+max_mem_fraction: 0.25
+system_ram_limit: 85.0
+
+# Disable W&B for smoke test
+wandb: false

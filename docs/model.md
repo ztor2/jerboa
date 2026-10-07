@@ -14,7 +14,7 @@ JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~20
 | **Intermediate Size ($d_{ffn}$)** | 2048 (SwiGLU) | 2048 |
 | **Layers** | 28 (Deep & Thin) | 28 |
 | **Attention Heads** | 12 Query / 4 KV (GQA 3:1) | 12 Query / 4 KV |
-| **Context Length** | 4,096 tokens (extensible to 16K via YaRN) | 4,096 tokens |
+| **Context Length** | 8,192 tokens (extensible to 32K~64K via YaRN) | 8,192 tokens |
 | **Vocabulary Size** | 49,152 tokens (see `docs/tokenizer.md`) | 49,152 tokens |
 | **VRAM Footprint** | **~885 MB** (FP32) / **~445 MB** (FP16) | **~920 MB** (built-in) / **~2.1 GB** (EmbeddingGemma FP16) |
 
@@ -32,6 +32,7 @@ JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~20
 - **Grouped-Query Attention (GQA 3:1)**: Shares 4 Key-Value heads across 12 Query heads, reducing KV cache memory by 66.7%.
 - **MQA Support**: Supports single-KV head mode (`num_key_value_heads=1`) via configuration.
 - **Hardware Acceleration**: Native PyTorch SDPA (`F.scaled_dot_product_attention`) using Metal kernels on macOS.
+- **RoPE Base Frequency ($\theta$)**: Configured to $500,000.0$ (Llama-3 standard), preserving high position resolution across long sequences.
 
 ### ③ Feed-Forward Network & Weight Tying
 - **SwiGLU Activation**:
@@ -43,8 +44,8 @@ JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~20
 ## 3. Modern SLM Innovations
 
 ### ① Interleaved Sliding Window Attention (SWA)
-- **Mechanism**: 12 layers restrict attention to a local 2,048-token window; every 4th layer (layers 4, 8, 12, 16) performs full global attention.
-- **Benefit**: Cuts KV cache memory by **~60%** in long sequences (16K+) while preserving global context recall via periodic anchor layers.
+- **Mechanism**: 21 layers restrict attention to a local 2,048-token window; every 4th layer (7 global layers) performs full global attention.
+- **Benefit**: Cuts KV cache memory by **~60%** in long sequences (16K~64K) while preserving global context recall via periodic anchor layers.
 
 ### ② Multi-Token Prediction (MTP)
 - **Mechanism**: Auxiliary 1-layer transformer block predicts token $t+2$ concurrently from hidden state $h_t$ and embedding $e(x_{t+1})$.
@@ -52,11 +53,11 @@ JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~20
   $$\mathcal{L}_{total} = \mathcal{L}_{next} + 0.3 \cdot \mathcal{L}_{mtp}$$
 - **Inference**: Enables 2-token simultaneous emission per forward step via speculative decoding (`generate_2token_step()`).
 
-### ③ YaRN RoPE Scaling
+### ③ YaRN RoPE Scaling (32K ~ 64K Ultra-Long Context)
 - **Mechanism**: Scales Rotary Position Embeddings across frequencies:
   - High frequencies (local syntax): Preserved without scaling.
   - Low frequencies (global position): Interpolated smoothly across context multiplier $s$.
-- Extends context window from 4,096 to 16,384 tokens with zero additional parameters.
+- Extends context window from 8,192 up to 32,768 (4x) and 65,536 (8x) tokens with zero additional parameters.
 
 ### ④ Standardized Special Tokens
 Fully registered tokens to prevent sub-word fragmentation:

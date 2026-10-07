@@ -74,9 +74,12 @@ All training pipelines support **YAML recipes** (`recipes/*.yaml`) so hyperparam
 
 | Shortcut | Pipeline | Default Recipe |
 | :--- | :--- | :--- |
-| `make pretrain` | Rolling-buffer pre-training (MPS / Single GPU) | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
+| `make pretrain` | Phase 1 Foundation Pre-training (seq_len=2048) | [`recipes/pretrain/phase1_base.yaml`](file:///Users/jc/jerboa/recipes/pretrain/phase1_base.yaml) |
+| `make pretrain-long` | Phase 2 Long-Context Extension (seq_len=8192) | [`recipes/pretrain/phase2_long.yaml`](file:///Users/jc/jerboa/recipes/pretrain/phase2_long.yaml) |
+| `make pretrain-smoke`| Rapid local smoke test & debugging | [`recipes/pretrain/smoke_test.yaml`](file:///Users/jc/jerboa/recipes/pretrain/smoke_test.yaml) |
 | `make pretrain-fast` | High-throughput pre-training (batch=8) | [`recipes/pretrain_fast.yaml`](file:///Users/jc/jerboa/recipes/pretrain_fast.yaml) |
-| `make pretrain-ddp` | Distributed Multi-GPU pre-training (`torchrun`, GPUS=2) | [`recipes/pretrain.yaml`](file:///Users/jc/jerboa/recipes/pretrain.yaml) |
+| `make pretrain-ddp` | Distributed Multi-GPU pre-training (`torchrun`, GPUS=2) | [`recipes/pretrain/runpod_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_ddp.yaml) |
+| `make pretrain-runpod`| RunPod 2x 3090 DDP distributed pre-training | [`recipes/pretrain/runpod_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_ddp.yaml) |
 | `make sft` | Supervised fine-tuning (ChatML) | [`recipes/sft.yaml`](file:///Users/jc/jerboa/recipes/sft.yaml) |
 | `make dpo` | Direct preference optimization | [`recipes/dpo.yaml`](file:///Users/jc/jerboa/recipes/dpo.yaml) |
 | `make grpo` | Group relative policy optimization | [`recipes/grpo.yaml`](file:///Users/jc/jerboa/recipes/grpo.yaml) |
