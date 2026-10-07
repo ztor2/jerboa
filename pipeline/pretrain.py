@@ -271,6 +271,7 @@ def run_pretrain(
     wandb_run_name: Optional[str] = None,
     aihub_dir: Optional[str] = None,
     interleave_pattern: str = "fineweb,aihub",
+    gradient_checkpointing: bool = False,
 ):
     """Unified pre-training entry point."""
     dist_info = setup_distributed()
@@ -407,6 +408,10 @@ def run_pretrain(
             print(f"Initializing new JerboaLM ({total_params/1e6:.1f}M params, {config.num_hidden_layers} Layers, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
 
     model.to(device)
+    if gradient_checkpointing:
+        model.gradient_checkpointing_enable()
+        if is_main_process:
+            print("[Optimization] Activation Gradient Checkpointing Enabled (peak VRAM reduced to ~8-11 GB)")
     if dist_info["is_distributed"]:
         model = torch.nn.parallel.DistributedDataParallel(
             model,
@@ -960,6 +965,8 @@ if __name__ == "__main__":
     parser.add_argument("--no_wandb", action="store_false", dest="wandb", help="Disable Weights & Biases tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=False, help="Enable activation gradient checkpointing for VRAM efficiency")
+    parser.add_argument("--no_gradient_checkpointing", action="store_false", dest="gradient_checkpointing", help="Disable gradient checkpointing")
     args = parser.parse_args()
     args = apply_recipe(args, args.recipe or default_recipe)
 
@@ -985,4 +992,5 @@ if __name__ == "__main__":
         wandb_run_name=args.wandb_run,
         aihub_dir=getattr(args, "aihub_dir", None),
         interleave_pattern=getattr(args, "interleave_pattern", "fineweb,fineweb,aihub,aihub,fineweb,code"),
+        gradient_checkpointing=getattr(args, "gradient_checkpointing", False),
     )

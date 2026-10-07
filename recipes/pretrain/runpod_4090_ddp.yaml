@@ -29,6 +29,7 @@ weight_decay: 0.1
 # Fault tolerance & model architecture
 resume: auto
 enable_mtp: true
+gradient_checkpointing: true
 
 # Guardrails
 system_ram_limit: 90.0

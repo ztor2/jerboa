@@ -49,6 +49,8 @@ class JerboaConfig(PretrainedConfig):
         enable_mtp: bool = True,
         use_mtp: bool = False,
         mtp_loss_factor: float = 0.3,
+        # Memory Optimization
+        gradient_checkpointing: bool = False,
         # Multimodal parameters
         vision_hidden_size: int = 768,
         audio_hidden_size: int = 512,
@@ -77,6 +79,7 @@ class JerboaConfig(PretrainedConfig):
         self.enable_mtp = enable_mtp
         self.use_mtp = use_mtp
         self.mtp_loss_factor = mtp_loss_factor
+        self.gradient_checkpointing = gradient_checkpointing
 
         # Multimodal
         self.vision_hidden_size = vision_hidden_size

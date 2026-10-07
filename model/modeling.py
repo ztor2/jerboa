@@ -369,7 +369,7 @@ class JerboaModel(JerboaPreTrainedModel):
             config=config,
         )
 
-        self.gradient_checkpointing = False
+        self.gradient_checkpointing = getattr(config, "gradient_checkpointing", False)
         self.post_init()
 
     def get_input_embeddings(self):
@@ -449,6 +449,7 @@ class JerboaModel(JerboaPreTrainedModel):
                     past_kv,
                     use_cache,
                     position_ids,
+                    use_reentrant=False,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -532,6 +533,12 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
 
     def set_output_embeddings(self, new_embeddings):
         self.lm_head = new_embeddings
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        self.model.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self):
+        self.model.gradient_checkpointing = False
 
     def forward(
         self,
