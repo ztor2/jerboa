@@ -7,6 +7,7 @@ data/**
 !data/**/
 !data/**/sample.*
 !data/**/fineweb_edu_sample.txt
+!data/tokenizer/**
 data/manifests/
 .env
 wandb/

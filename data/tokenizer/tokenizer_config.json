@@ -1,0 +1,156 @@
+{
+  "added_tokens_decoder": {
+    "0": {
+      "content": "<|pad|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "1": {
+      "content": "<|im_start|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "2": {
+      "content": "<|im_end|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "3": {
+      "content": "<|unk|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "4": {
+      "content": "<|endoftext|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "5": {
+      "content": "<think>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "6": {
+      "content": "</think>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "7": {
+      "content": "<answer>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "8": {
+      "content": "</answer>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "9": {
+      "content": "<|image|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "10": {
+      "content": "<|audio|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "11": {
+      "content": "<tool_call>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "12": {
+      "content": "</tool_call>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "13": {
+      "content": "<tool_response>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "14": {
+      "content": "</tool_response>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    },
+    "15": {
+      "content": "<|quad_space|>",
+      "lstrip": false,
+      "normalized": false,
+      "rstrip": false,
+      "single_word": false,
+      "special": true
+    }
+  },
+  "additional_special_tokens": [
+    "<|endoftext|>",
+    "<|im_start|>",
+    "<|im_end|>",
+    "<think>",
+    "</think>",
+    "<answer>",
+    "</answer>",
+    "<|image|>",
+    "<|audio|>",
+    "<tool_call>",
+    "</tool_call>",
+    "<tool_response>",
+    "</tool_response>",
+    "<|quad_space|>"
+  ],
+  "bos_token": "<|im_start|>",
+  "chat_template": "{% for message in messages %}{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}{% endfor %}{% if add_generation_prompt %}{{ '<|im_start|>assistant\n' }}{% endif %}",
+  "clean_up_tokenization_spaces": true,
+  "eos_token": "<|im_end|>",
+  "model_max_length": 1000000000000000019884624838656,
+  "pad_token": "<|pad|>",
+  "tokenizer_class": "PreTrainedTokenizerFast",
+  "unk_token": "<|unk|>"
+}

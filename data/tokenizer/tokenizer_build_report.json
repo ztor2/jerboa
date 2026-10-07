@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-10-07T12:24:39Z",
+  "vocab_size": 49152,
+  "corpus_stats": {
+    "ko_knowledge": {
+      "file": "data/tokenizer_corpus/ko_knowledge.txt",
+      "size_mb": 496.06
+    },
+    "ko_dialogue": {
+      "file": "data/tokenizer_corpus/ko_dialogue.txt",
+      "size_mb": 6.14
+    },
+    "ko_colloquial": {
+      "file": "data/tokenizer_corpus/ko_colloquial.txt",
+      "size_mb": 19.48
+    },
+    "en_educational": {
+      "file": "data/tokenizer_corpus/en_educational.txt",
+      "size_mb": 237.15
+    },
+    "en_wiki": {
+      "file": "data/tokenizer_corpus/en_wiki.txt",
+      "size_mb": 18.04
+    },
+    "code_samples": {
+      "file": "data/tokenizer_corpus/code_samples.txt",
+      "size_mb": 13.46
+    }
+  },
+  "total_corpus_mb": 790.34,
+  "benchmarks": {
+    "ko_literary": {
+      "text": "브롬톤 런던은 친환경 비건 충전재를 사용하여 자연 순환 기반 지속가능성을 강조합니다.",
+      "jerboa_tokens": 19,
+      "smollm_tokens": 102
+    },
+    "ko_colloquial": {
+      "text": "오늘 날씨 완전 좋은데 이따가 한강 가서 라면 먹을래? 진짜 맛있겠다!",
+      "jerboa_tokens": 25,
+      "smollm_tokens": 80
+    },
+    "ko_technical": {
+      "text": "트랜스포머 아키텍처의 멀티헤드 어텐션과 슬라이딩 윈도우 메커니즘을 결합합니다.",
+      "jerboa_tokens": 18,
+      "smollm_tokens": 97
+    },
+    "en_academic": {
+      "text": "The transformer architecture relies on grouped-query attention to optimize cache efficiency.",
+      "jerboa_tokens": 14,
+      "smollm_tokens": 14
+    },
+    "en_dialogue": {
+      "text": "Hey, what are you doing tonight? Let's grab some coffee and chat!",
+      "jerboa_tokens": 18,
+      "smollm_tokens": 16
+    },
+    "code_python": {
+      "text": "def forward(self, input_ids):\n    x = self.embed(input_ids)\n    return self.layers(x)",
+      "jerboa_tokens": 31,
+      "smollm_tokens": 28
+    }
+  }
+}

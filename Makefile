@@ -1,4 +1,4 @@
-.PHONY: help pretrain sft dpo grpo multimodal bench chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
+.PHONY: help pretrain sft dpo grpo multimodal tokenizer bench chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
 
 VENV_PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3 >/dev/null 2>&1; then echo python3; else echo python; fi)
 PYTHON ?= $(VENV_PYTHON)
@@ -54,6 +54,9 @@ grpo:
 
 multimodal:
 	$(RUNNER) $(PYTHON) pipeline/train_multimodal.py --recipe recipes/multimodal.yaml
+
+tokenizer:
+	$(PYTHON) scripts/tokenizer/build_tokenizer.py --vocab-size $(or $(VOCAB_SIZE),49152)
 
 bench:
 	$(PYTHON) tests/benchmark.py

@@ -23,7 +23,7 @@ class JerboaConfig(PretrainedConfig):
 
     def __init__(
         self,
-        vocab_size: int = 32768,
+        vocab_size: int = 49152,
         hidden_size: int = 768,
         intermediate_size: int = 2048,
         num_hidden_layers: int = 28,

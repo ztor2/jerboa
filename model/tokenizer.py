@@ -97,11 +97,18 @@ def build_bpe_tokenizer(
 
 
 def get_default_tokenizer(
-    tokenizer_name_or_path: str = "HuggingFaceTB/SmolLM-135M",
+    tokenizer_name_or_path: Optional[str] = None,
     save_directory: Optional[str] = None,
     trust_remote_code: bool = True,
 ) -> PreTrainedTokenizerFast:
     """Load an existing fast tokenizer or download a modern lightweight tokenizer."""
+    if tokenizer_name_or_path is None:
+        local_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer")
+        if os.path.exists(os.path.join(local_dir, "tokenizer.json")):
+            tokenizer_name_or_path = local_dir
+        else:
+            tokenizer_name_or_path = "HuggingFaceTB/SmolLM-135M"
+
     try:
         tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, trust_remote_code=trust_remote_code)
     except Exception:

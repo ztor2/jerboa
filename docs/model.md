@@ -8,15 +8,15 @@ JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~20
 
 | Parameter | Language Backbone (`JerboaForCausalLM`) | Multimodal (`JerboaVLForConditionalGeneration`) |
 | :--- | :--- | :--- |
-| **Total Parameters** | **~201.4M** (base) / **~208.8M** (with MTP) | **~217.2M** (built-in ViT) / **~953.2M** (EmbeddingGemma-2) |
-| **Trainable Parameters** | **~201.4M** (base) / **~208.8M** (with MTP) | **~217.2M** (built-in) / **~208.8M** (frozen EmbeddingGemma) |
+| **Total Parameters** | **~221.4M** (base) / **~228.9M** (with MTP) | **~229.8M** (built-in ViT) / **~965.8M** (EmbeddingGemma-2) |
+| **Trainable Parameters** | **~221.4M** (base) / **~228.9M** (with MTP) | **~229.8M** (built-in) / **~228.9M** (frozen EmbeddingGemma) |
 | **Hidden Size ($d_{model}$)** | 768 | 768 |
 | **Intermediate Size ($d_{ffn}$)** | 2048 (SwiGLU) | 2048 |
 | **Layers** | 28 (Deep & Thin) | 28 |
 | **Attention Heads** | 12 Query / 4 KV (GQA 3:1) | 12 Query / 4 KV |
 | **Context Length** | 4,096 tokens (extensible to 16K via YaRN) | 4,096 tokens |
-| **Vocabulary Size** | 49,164 tokens | 49,164 tokens |
-| **VRAM Footprint** | **~800 MB** (FP32) / **~420 MB** (FP16) | **~850 MB** (built-in) / **~2.0 GB** (EmbeddingGemma FP16) |
+| **Vocabulary Size** | 49,152 tokens (see `docs/tokenizer.md`) | 49,152 tokens |
+| **VRAM Footprint** | **~885 MB** (FP32) / **~445 MB** (FP16) | **~920 MB** (built-in) / **~2.1 GB** (EmbeddingGemma FP16) |
 
 ---
 
