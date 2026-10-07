@@ -134,3 +134,19 @@ When training multiple disparate distributions (English web, Korean conversation
    - **Modality Adaptation Paradigm**: Exploits pre-trained visual knowledge trained on billions of images (LAION, WebLI).
    - **Zero Pre-training Overhead**: The 745M backbone remains frozen (`freeze=True`). Training only updates the 2-layer MLP projector (`VisionProjector`, ~2–3MB), requiring negligible VRAM and only a few hours of compute on a single GPU.
 
+### Visual Soft Tokens vs. Text Captions: How Multimodal Injection Works
+1. **Does the LLM receive a text caption?**:
+   - **No**. If images were converted into text descriptions (e.g. "A brown cat on a table"), fine-grained spatial coordinates (bounding boxes), raw text OCR glyphs, micro-textures, and geometry would collapse through a severe discrete information bottleneck.
+   - Instead, the vision backbone outputs **256 continuous visual latent vectors** (each 768-dimensional) corresponding to spatial patches across the image grid.
+2. **The Nature of the 768-dim Embedding**:
+   - Each vector is not a word, but a high-dimensional continuous representation of visual semantics in a specific $16\times 16$ pixel patch (e.g., edges, textures, object parts, lighting).
+3. **The Exact Role of `VisionProjector`**:
+   - Even though both EmbeddingGemma and JerboaLM share $d_{model}=768$, their coordinate spaces are completely alien to each other (Visual feature space vs. Token semantic space).
+   - `VisionProjector` (a 2-layer MLP with SiLU and RMSNorm) performs **Cross-Modal Coordinate Translation**: it aligns visual latent representations into the exact vector space of JerboaLM's text token embeddings.
+4. **Placeholder Token Injection**:
+   - In `JerboaVLForConditionalGeneration`, text prompts contain `<|image|>` placeholder tokens.
+   - In the input embedding matrix (`inputs_embeds`), the placeholder token embeddings are overwritten directly with the projected visual vectors:
+     $$\text{inputs\_embeds}[b, \text{image\_mask}] = \text{proj\_vision}$$
+   - When the multi-head attention blocks process this sequence, text tokens can attend directly to visual patch vectors, allowing end-to-end visual question answering and multimodal generation.
+
+
