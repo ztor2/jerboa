@@ -1,6 +1,6 @@
 # Model Architecture & Design
 
-JerboaLM is an ultra-lightweight language and multimodal model (~133M base / up to ~885M multimodal) designed for Apple Silicon (MPS / Metal) and edge/cloud deployments.
+JerboaLM is an ultra-lightweight language and multimodal model (~201M base / ~209M MTP / up to ~953M multimodal) designed for Apple Silicon (MPS / Metal) and edge/cloud deployments following the Deep & Thin SLM paradigm.
 
 ---
 
@@ -8,15 +8,15 @@ JerboaLM is an ultra-lightweight language and multimodal model (~133M base / up 
 
 | Parameter | Language Backbone (`JerboaForCausalLM`) | Multimodal (`JerboaVLForConditionalGeneration`) |
 | :--- | :--- | :--- |
-| **Total Parameters** | **~133.3M** (base) / **~140.8M** (with MTP) | **~141.7M** (built-in ViT) / **~885.2M** (EmbeddingGemma-2) |
-| **Trainable Parameters** | **~133.3M** | **~141.7M** (built-in) / **~140.8M** (frozen EmbeddingGemma) |
+| **Total Parameters** | **~201.4M** (base) / **~208.8M** (with MTP) | **~217.2M** (built-in ViT) / **~953.2M** (EmbeddingGemma-2) |
+| **Trainable Parameters** | **~201.4M** (base) / **~208.8M** (with MTP) | **~217.2M** (built-in) / **~208.8M** (frozen EmbeddingGemma) |
 | **Hidden Size ($d_{model}$)** | 768 | 768 |
 | **Intermediate Size ($d_{ffn}$)** | 2048 (SwiGLU) | 2048 |
-| **Layers** | 16 | 16 |
+| **Layers** | 28 (Deep & Thin) | 28 |
 | **Attention Heads** | 12 Query / 4 KV (GQA 3:1) | 12 Query / 4 KV |
 | **Context Length** | 4,096 tokens (extensible to 16K via YaRN) | 4,096 tokens |
 | **Vocabulary Size** | 49,164 tokens | 49,164 tokens |
-| **VRAM Footprint** | **~500 MB** (FP32) / **~270 MB** (FP16) | **~600 MB** (built-in) / **~1.8 GB** (EmbeddingGemma FP16) |
+| **VRAM Footprint** | **~800 MB** (FP32) / **~420 MB** (FP16) | **~850 MB** (built-in) / **~2.0 GB** (EmbeddingGemma FP16) |
 
 ---
 

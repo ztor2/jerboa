@@ -6,8 +6,8 @@ from transformers.configuration_utils import PretrainedConfig
 class JerboaConfig(PretrainedConfig):
     """Configuration class to store the configuration of a `JerboaModel`.
 
-    Default parameters target approximately ~125M-140M parameters:
-    - 16 layers, 768 hidden size, 2048 intermediate size (SwiGLU)
+    Default parameters target approximately ~201M-209M parameters (Deep & Thin):
+    - 28 layers, 768 hidden size, 2048 intermediate size (SwiGLU)
     - 12 query heads, 4 KV heads (GQA 3:1)
     - Tied word embeddings (vocab_size=32768) saving ~25M params for deeper layers
     - QK-Norm enabled for numerical stability
@@ -26,7 +26,7 @@ class JerboaConfig(PretrainedConfig):
         vocab_size: int = 32768,
         hidden_size: int = 768,
         intermediate_size: int = 2048,
-        num_hidden_layers: int = 16,
+        num_hidden_layers: int = 28,
         num_attention_heads: int = 12,
         num_key_value_heads: int = 4,
         hidden_act: str = "silu",

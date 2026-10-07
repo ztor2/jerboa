@@ -17,8 +17,8 @@ grad_accum: 2
 seq_len: 256
 lr: 4.0e-4
 
-# Seamless resume from Hugging Face Hub checkpoint
-resume: ztor2/jerboa-base
+# Fresh pre-training run for 208M Deep & Thin architecture (from scratch)
+resume: null
 enable_mtp: true
 
 # RunPod Linux resource limits (plenty of dedicated VRAM and RAM)
