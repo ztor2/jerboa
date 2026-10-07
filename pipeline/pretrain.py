@@ -963,6 +963,7 @@ if __name__ == "__main__":
     parser.add_argument("--aihub_dir", type=str, default=None, help="Directory containing AI-Hub raw zip archives")
     parser.add_argument("--interleave_pattern", type=str, default="fineweb,fineweb,aihub,aihub,fineweb,code", help="Chunk alternation pattern (e.g. fineweb,fineweb,aihub,aihub,fineweb,code)")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
+    parser.add_argument("--no_wandb", action="store_false", dest="wandb", help="Disable Weights & Biases tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     args = parser.parse_args()
