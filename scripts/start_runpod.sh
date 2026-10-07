@@ -37,11 +37,8 @@ fi
 source "$VENV_PATH/bin/activate"
 
 # 3. Fast Dependency Sync
-echo "[2/4] Ensuring core packages are installed across all interpreters..."
+echo "[2/4] Ensuring core packages are installed in virtual environment..."
 python3 -m pip install -r requirements.txt --quiet
-if [ -f "/usr/local/bin/pip" ]; then
-    /usr/local/bin/pip install -r requirements.txt --quiet 2>/dev/null || true
-fi
 
 # 4. GPU Hardware Detection
 echo "[3/4] Detecting GPU Hardware & Topology..."
