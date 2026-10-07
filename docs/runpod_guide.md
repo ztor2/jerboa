@@ -24,14 +24,9 @@ python pipeline/pretrain.py --recipe recipes/pretrain/smoke_test.yaml --no_wandb
 Keep training active 24/7 even after disconnecting terminal:
 ```bash
 tmux new -s pretrain
-source /workspace/venv/bin/activate
 
-# Single GPU (RTX 4090 / 3090)
-python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml
-
-# Dual GPU (2x 4090 / 3090 DDP)
-python -m torch.distributed.run --nproc_per_node=2 pipeline/pretrain.py --recipe recipes/pretrain/runpod_4090_ddp.yaml
-
+# All-In-One Automatic Launcher (Detects 1x or 2x GPU and starts optimal recipe)
+bash scripts/start_runpod.sh
 ```
 
 ### Step 4: Detach Session
