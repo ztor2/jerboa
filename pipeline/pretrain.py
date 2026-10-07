@@ -18,6 +18,7 @@ import contextlib
 import hashlib
 import json
 import os
+import shutil
 import sys
 import time
 from typing import Dict, Iterator, List, Optional
@@ -272,6 +273,7 @@ def run_pretrain(
     aihub_dir: Optional[str] = None,
     interleave_pattern: str = "fineweb,aihub",
     gradient_checkpointing: bool = False,
+    save_total_limit: int = 2,
 ):
     """Unified pre-training entry point."""
     dist_info = setup_distributed()
@@ -743,6 +745,22 @@ def run_pretrain(
                 torch.save(pt_state, os.path.join(ckpt_dir, "training_state.pt"))
                 torch.save(pt_state, os.path.join(output_dir, "latest_state.pt"))
 
+                # Rolling Checkpoint Retention: keep only latest `save_total_limit` checkpoints
+                if save_total_limit > 0 and os.path.exists(steps_dir):
+                    saved_chunks = sorted([
+                        d for d in os.listdir(steps_dir)
+                        if os.path.isdir(os.path.join(steps_dir, d)) and d.startswith("chunk_")
+                    ])
+                    while len(saved_chunks) > save_total_limit:
+                        old_chunk = saved_chunks.pop(0)
+                        old_path = os.path.join(steps_dir, old_chunk)
+                        try:
+                            shutil.rmtree(old_path)
+                            print(f"[Checkpoint Rotation] Pruned old checkpoint '{old_chunk}' (keeping latest {save_total_limit})")
+                        except Exception as e:
+                            print(f"[Checkpoint Rotation] Notice: Failed to remove old checkpoint '{old_path}': {e}")
+
+
                 log_lineage_record({
                     "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                     "chunk_id": chunk_name,
@@ -968,6 +986,7 @@ if __name__ == "__main__":
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
     parser.add_argument("--gradient_checkpointing", action="store_true", default=False, help="Enable activation gradient checkpointing for VRAM efficiency")
     parser.add_argument("--no_gradient_checkpointing", action="store_false", dest="gradient_checkpointing", help="Disable gradient checkpointing")
+    parser.add_argument("--save_total_limit", type=int, default=2, help="Maximum number of step checkpoints to keep on disk (default: 2)")
     args = parser.parse_args()
     args = apply_recipe(args, args.recipe or default_recipe)
 
@@ -994,4 +1013,5 @@ if __name__ == "__main__":
         aihub_dir=getattr(args, "aihub_dir", None),
         interleave_pattern=getattr(args, "interleave_pattern", "fineweb,fineweb,aihub,aihub,fineweb,code"),
         gradient_checkpointing=getattr(args, "gradient_checkpointing", False),
+        save_total_limit=getattr(args, "save_total_limit", 2),
     )

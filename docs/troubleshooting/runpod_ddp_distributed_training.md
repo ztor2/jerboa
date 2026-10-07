@@ -13,6 +13,7 @@ This document records the full diagnostic investigation, root causes, false lead
 | **3. tqdm Import Failure** | `ModuleNotFoundError: No module named 'tqdm'` on worker launch | Missing package in system environment (`pip install` into `/usr/local/bin/pip`) | `/usr/local/bin/torchrun` shebang invokes `/usr/local/bin/python`, bypassing active virtualenv | Launch with `python3 -m torch.distributed.run`, ensuring all workers run inside `/workspace/venv` |
 | **4. Forward Pass CUDA OOM** | `torch.OutOfMemoryError` allocating 24 MiB at Step 1 forward pass | GPU memory too small (24GB insufficient) | 1) SWA redundant float mask disabled SDPA FlashAttention<br>2) Micro-batch 8 exceeded activation budget<br>3) MTP double-logits allocation | 1) Bypass SWA mask when $q\_len \le \text{window}$<br>2) Reduce micro-batch to 4 ($accum=4$)<br>3) Enable activation gradient checkpointing |
 | **5. Checkpoint Metadata Mismatch** | `CheckpointError: Recomputed values have different metadata (4096 vs 2048)` | Non-deterministic layers or rotary embedding cache bug | `use_cache=True` was active during training, appending KV caches again during backward pass | Enforce `use_cache=False` whenever `self.training=True` and in `run_pretrain()` |
+| **6. Pod Volume Exhaustion** | `SafetensorError: I/O error: No space left on device (os error 28)` at Chunk 12 | Ephemeral text data accumulation | Every chunk saved full weights (845MB) + optimizer state (1.7GB) = 2.54GB without retention limits | Implemented rolling checkpoint pruning (`save_total_limit: 2`), bounding checkpoint storage to ~6.8GB permanently |
 
 ---
 
@@ -135,6 +136,38 @@ In [model/config.py](file:///Users/jc/jerboa/model/config.py), `use_cache` defau
    use_cache = use_cache if use_cache is not None else (self.config.use_cache if not self.training else False)
    ```
 2. Explicitly enforced `model.config.use_cache = False` upon initialization in [pipeline/pretrain.py](file:///Users/jc/jerboa/pipeline/pretrain.py).
+
+---
+
+### Case 6: Persistent Storage Volume Exhaustion (`No space left on device`)
+
+#### Symptoms
+```
+safetensors._safetensors_rust.SafetensorError: Error while serializing: I/O error: No space left on device (os error 28)
+raw_model.save_pretrained(ckpt_dir) FAILED at Chunk 12
+df -h -> /workspace: 30G used (99% full, 416MB free)
+```
+
+#### Why Did Volume Exhaustion Happen in "Rolling" Mode?
+The project's "Rolling-Buffer Pre-training" paradigm originally targeted data ephemeralization:
+- Raw downloaded texts (`data/ephemeral_chunk.txt`) were downloaded, trained on, and immediately deleted after each chunk, keeping data storage under ~11 MB.
+- **However, checkpoints were NOT rolled**: In [pipeline/pretrain.py](file:///Users/jc/jerboa/pipeline/pretrain.py), every single chunk saved:
+  - Model weights (`model.safetensors`): 845 MB
+  - Full AdamW optimizer state (`training_state.pt`): 1.70 GB
+  - Total per chunk: **2.54 GB** stored permanently into `checkpoints/pretrain/steps/chunk_XXXX/`
+- Across 11 completed chunks: $11 \times 2.54\text{ GB} = 27.94\text{ GB}$.
+- Adding `latest_state.pt` (1.70 GB) brought total disk usage to $29.6\text{ GB}$, hitting the 30 GB volume quota at Chunk 12.
+
+#### Resolution
+1. **Automated Rolling Checkpoint Retention**:
+   Implemented `save_total_limit: 2` in [pipeline/pretrain.py](file:///Users/jc/jerboa/pipeline/pretrain.py) and [recipes/pretrain/runpod_4090_ddp.yaml](file:///Users/jc/jerboa/recipes/pretrain/runpod_4090_ddp.yaml).
+   After saving each new chunk, older chunk directories are automatically pruned, keeping only the latest $N$ valid step checkpoints.
+   $$\text{Permanent Checkpoint Footprint} = (2 \times 2.54\text{ GB}) + 1.70\text{ GB} \approx 6.78\text{ GB}$$
+   This bounds disk usage permanently to $<7\text{ GB}$, leaving $>23\text{ GB}$ safe headroom regardless of how many hundreds of chunks are processed.
+2. **Immediate Recovery**:
+   Pruned historic checkpoints (`chunk_0001` through `chunk_0010` and incomplete `chunk_0012`), preserving `chunk_0011` intact. Volume space instantly recovered to 26 GB free (17% disk utilization).
+3. **Lossless Resumption**:
+   Pre-training resumes seamlessly from Chunk 12 using `latest_state.json` and `chunk_0011` weights.
 
 ---
 

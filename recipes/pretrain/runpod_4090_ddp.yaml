@@ -30,6 +30,7 @@ weight_decay: 0.1
 resume: auto
 enable_mtp: true
 gradient_checkpointing: true
+save_total_limit: 2
 
 # Guardrails
 system_ram_limit: 90.0
