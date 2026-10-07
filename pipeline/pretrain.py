@@ -397,20 +397,14 @@ def run_pretrain(
             if torch.cuda.is_available():
                 torch.cuda.manual_seed_all(42)
         mtp_status = "Enabled (t -> t+2)" if enable_mtp else "Disabled"
-        if is_main_process:
-            print(f"Initializing new JerboaLM (138M params, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
         config = JerboaConfig(
             vocab_size=len(tokenizer),
-            hidden_size=768,
-            intermediate_size=2048,
-            num_hidden_layers=16,
-            num_attention_heads=12,
-            num_key_value_heads=4,
-            tie_word_embeddings=True,
-            qk_norm=True,
             enable_mtp=enable_mtp,
         )
         model = JerboaForCausalLM(config)
+        total_params = sum(p.numel() for p in model.parameters())
+        if is_main_process:
+            print(f"Initializing new JerboaLM ({total_params/1e6:.1f}M params, {config.num_hidden_layers} Layers, GQA, QK-Norm, Tied Embeddings, MTP: {mtp_status})...")
 
     model.to(device)
     if dist_info["is_distributed"]:
