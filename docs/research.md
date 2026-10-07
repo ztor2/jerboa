@@ -160,7 +160,10 @@ When training multiple disparate distributions (English web, Korean conversation
    - **Data & Compute Requirements**: Converges smoothly with as few as 50k–500k image-text pairs within 1–2 epochs (under 4 hours on a single modern GPU).
 3. **The Standard Two-Stage Alignment Pipeline**:
    - **Stage 1 (Feature Alignment / Projector Warmup)**: Freeze Backbone + Freeze LLM; train only `VisionProjector` on image-caption pairs to establish coordinate alignment.
+     - *Intuition*: Given an apple image, aligns its 256 visual patch vectors into the semantic coordinate neighborhood of "apple" / "red" / "fruit" within the LLM's latent space.
    - **Stage 2 (Visual Instruction SFT)**: Freeze Backbone; tune `VisionProjector` + `JerboaLM` on conversational VQA / OCR / reasoning datasets for conversational multimodal mastery.
+     - *Intuition*: Given an apple image and the prompt *"What color is this fruit?"*, enables multi-head attention to cross-reference the query with specific visual patch vectors (e.g. skin color/gloss) to reason and generate *"The apple is red"*.
+
 
 
 
