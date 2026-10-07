@@ -29,8 +29,9 @@ source /workspace/venv/bin/activate
 # Single GPU (RTX 4090 / 3090)
 python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml
 
-# Dual GPU (2x 3090 DDP)
-torchrun --nproc_per_node=2 pipeline/pretrain.py --recipe recipes/pretrain/runpod_ddp.yaml
+# Dual GPU (2x 4090 / 3090 DDP)
+python -m torch.distributed.run --nproc_per_node=2 pipeline/pretrain.py --recipe recipes/pretrain/runpod_4090_ddp.yaml
+
 ```
 
 ### Step 4: Detach Session
