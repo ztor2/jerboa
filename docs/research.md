@@ -149,4 +149,18 @@ When training multiple disparate distributions (English web, Korean conversation
      $$\text{inputs\_embeds}[b, \text{image\_mask}] = \text{proj\_vision}$$
    - When the multi-head attention blocks process this sequence, text tokens can attend directly to visual patch vectors, allowing end-to-end visual question answering and multimodal generation.
 
+### Two-Stage Multimodal Training Dynamics & Rapid Convergence
+1. **Why Pure Text Pre-training Yields Zero Vision Capability**:
+   - At initialization, `VisionProjector` weights are random Gaussian noise.
+   - Pure text pre-training does not pass `<|image|>` tokens; loss gradients never backpropagate through the projector. Without multimodal image-text pairing, the projector remains an uncalibrated random transform, outputting gibberish into the LLM stream.
+2. **Why Pre-trained Frozen Backbones Converge Rapidly**:
+   - **From-Scratch Vision Training**: Requires billions of pixels to learn basic optical primitives (edge detection, Gabor filters, spatial hierarchies, texture, OCR glyphs).
+   - **Frozen Foundation Backbone**: Visual perception is already 100% solved by Google DeepMind; language fluency is already 100% solved by JerboaLM.
+   - **Only 1.5M Parameters to Learn**: The optimization problem collapses from multi-billion parameter feature extraction into a simple linear/MLP manifold rotation ($\approx 1.5\text{M}$ projector weights).
+   - **Data & Compute Requirements**: Converges smoothly with as few as 50k–500k image-text pairs within 1–2 epochs (under 4 hours on a single modern GPU).
+3. **The Standard Two-Stage Alignment Pipeline**:
+   - **Stage 1 (Feature Alignment / Projector Warmup)**: Freeze Backbone + Freeze LLM; train only `VisionProjector` on image-caption pairs to establish coordinate alignment.
+   - **Stage 2 (Visual Instruction SFT)**: Freeze Backbone; tune `VisionProjector` + `JerboaLM` on conversational VQA / OCR / reasoning datasets for conversational multimodal mastery.
+
+
 
