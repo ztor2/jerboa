@@ -14,6 +14,8 @@ This document records the full diagnostic investigation, root causes, false lead
 | **4. Forward Pass CUDA OOM** | `torch.OutOfMemoryError` allocating 24 MiB at Step 1 forward pass | GPU memory too small (24GB insufficient) | 1) SWA redundant float mask disabled SDPA FlashAttention<br>2) Micro-batch 8 exceeded activation budget<br>3) MTP double-logits allocation | 1) Bypass SWA mask when $q\_len \le \text{window}$<br>2) Reduce micro-batch to 4 ($accum=4$)<br>3) Enable activation gradient checkpointing |
 | **5. Checkpoint Metadata Mismatch** | `CheckpointError: Recomputed values have different metadata (4096 vs 2048)` | Non-deterministic layers or rotary embedding cache bug | `use_cache=True` was active during training, appending KV caches again during backward pass | Enforce `use_cache=False` whenever `self.training=True` and in `run_pretrain()` |
 | **6. Pod Volume Exhaustion** | `SafetensorError: I/O error: No space left on device (os error 28)` at Chunk 12 | Ephemeral text data accumulation | Every chunk saved full weights (845MB) + optimizer state (1.7GB) = 2.54GB without retention limits | Implemented rolling checkpoint pruning (`save_total_limit: 2`), bounding checkpoint storage to ~6.8GB permanently |
+| **7. Rotary Embedding `inv_freq` Desync** | Immediate `loss=nan` upon resuming training | Unstable learning rate or gradient explosion | `inv_freq` non-persistent buffer initialized with garbage GPU memory | Enforce dynamic frequency validation in `JerboaRotaryEmbedding` and non-finite loss/grad skip guards |
+| **8. HTTP Streaming I/O Bottleneck** | Chunk download stalling for 45~60s every chunk at Chunk 480+ | Network latency or HuggingFace API rate limits | `streaming=True` sequentially iterated and discarded 530,000+ documents over HTTP every chunk | Implemented Shard-Cached Rolling Parquet & JSONL Reader (<0.2s extraction, >1000x speedup, strictly bounded 2.6GB disk cache) |
 
 ---
 
@@ -188,6 +190,49 @@ Upon resuming pretraining from disk checkpoint, `loss=nan` appeared immediately.
    In [model/modeling.py](file:///Users/jc/jerboa/model/modeling.py), `_set_cos_sin_cache` automatically validates `self.inv_freq` and recomputes exact frequencies if the buffer is uninitialized, non-finite, or on meta device.
 2. **Non-finite Loss & Gradient Guards**:
    In [pipeline/pretrain.py](file:///Users/jc/jerboa/pipeline/pretrain.py), added `torch.isfinite(loss)` and `torch.isfinite(grad_norm)` checks to immediately skip corrupted batches and zero out gradients before they contaminate optimizer state.
+
+---
+
+### Case 8: HTTP Streaming I/O Bottleneck & Shard-Cached Rolling Data Architecture
+
+#### Symptoms
+```
+==================================================
+  PROCESSING CHUNK_0489 [FINEWEB] (Offset: 531,000)
+==================================================
+Resolving data files: 100%|██████████████████████████████████████████████████| 2410/2410 [00:00<00:00, 28004.87it/s]
+Downloading partition: 100%|████████████████████████████████████████████████████| 1500/1500 [00:52<00:00, 28.34it/s]
+Training chunk_0489: 100%|███████████████████████████████████████████████████| 27/27 [01:00<00:00, 2.25s/it]
+```
+At Chunk 480+, downloading a 1,500 document slice took 45~55 seconds over HTTP, while the 2x RTX 4090 GPUs finished training the chunk in ~50 seconds. Nearly 50% of total wall-clock time was wasted waiting for HTTP data downloads, leaving GPUs idle between chunks.
+
+#### Root Cause
+1. `load_dataset("HuggingFaceFW/fineweb-edu", streaming=True)` does not support random seeking by document index.
+2. In Python, the previous download loop iterated sequentially from document 0 to `skip_docs`:
+   ```python
+   for item in dataset:
+       if passed_docs < skip_docs:
+           passed_docs += 1
+           continue
+   ```
+   At Chunk 489 (`skip_docs = 531,000`), every single chunk was re-downloading and discarding over 530,000 documents over the network. As training progressed toward 1,000 chunks, download latency was projected to balloon past 2 minutes per chunk.
+
+#### Resolution: Shard-Cached Rolling Data Reader
+1. **Single-Shard NVMe Cache for FineWeb-Edu**:
+   - `HuggingFaceFW/fineweb-edu/sample/10BT` is partitioned into 14 Parquet shards (~2.05 GB and ~726,000 documents each).
+   - The reader maintains strictly **1 shard** in `data/cache/fineweb/`. One shard serves ~242 chunks of 3,000 documents (~3.5 hours of continuous training).
+   - Using `pyarrow.parquet.ParquetFile.read_row_groups()`, random slices are extracted directly from local NVMe in **0.04 ~ 0.12 seconds** (>1,000x speedup).
+   - When the cursor reaches 726,000, the previous shard is automatically deleted and the next shard is downloaded in 8.9s (one-time operation).
+2. **Local Code Archive for CodeParrot**:
+   - `codeparrot-clean-valid` (single 135MB archive, 61,373 documents) is decompressed once into `data/cache/code/codeparrot.jsonl` (610 MB).
+   - Slicing 3,000 Python documents takes **0.17 seconds** with seamless cyclic wrap-around.
+3. **Scaled Chunk Capacity**:
+   - Increased `docs_per_chunk` from 1,500 to 3,000 (~3.1M tokens per chunk, 49 optimizer steps).
+   - Halves checkpoint serialization and Hugging Face Hub synchronization frequency.
+4. **Volume Disk Budget Bounded**:
+   - Shard cache: ~2.05 GB (FineWeb) + 0.61 GB (Code) = **2.66 GB**.
+   - Checkpoints (`save_total_limit: 2`): ~6.78 GB.
+   - Total volume disk footprint: **< 9.5 GB** out of 30 GB (>20 GB safe headroom).
 
 ---
 
