@@ -4,7 +4,7 @@
 
 # Jerboa
 
-In Development
+in vitro
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue.svg)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.4+_MPS_%26_CUDA-orange.svg)
