@@ -155,9 +155,17 @@ if __name__ == "__main__":
     parser.add_argument("--top_p", type=float, default=0.9)
     parser.add_argument("--repetition_penalty", type=float, default=1.15)
     parser.add_argument("--system", type=str, default="You are Jerboa, an intelligent and helpful AI assistant.")
+    parser.add_argument("--device", type=str, default=None, help="Device to run inference on (cuda, mps, cpu, or auto)")
     args = parser.parse_args()
 
-    dev = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    if args.device:
+        dev = torch.device(args.device)
+    elif torch.cuda.is_available():
+        dev = torch.device("cuda:0")
+    elif torch.backends.mps.is_available():
+        dev = torch.device("mps")
+    else:
+        dev = torch.device("cpu")
     loaded_model, loaded_tokenizer = load_model_and_tokenizer(args.model, dev)
 
     if args.chat:
