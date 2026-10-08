@@ -205,44 +205,123 @@ def create_optimizer_and_scheduler(
     return optimizer, scheduler
 
 
+FINEWEB_10BT_SHARDS = [
+    ("sample/10BT/000_00000.parquet", 726000),
+    ("sample/10BT/001_00000.parquet", 729000),
+    ("sample/10BT/002_00000.parquet", 727000),
+    ("sample/10BT/003_00000.parquet", 734000),
+    ("sample/10BT/004_00000.parquet", 745000),
+    ("sample/10BT/005_00000.parquet", 738000),
+    ("sample/10BT/006_00000.parquet", 732000),
+    ("sample/10BT/007_00000.parquet", 725000),
+    ("sample/10BT/008_00000.parquet", 724000),
+    ("sample/10BT/009_00000.parquet", 713000),
+    ("sample/10BT/010_00000.parquet", 730000),
+    ("sample/10BT/011_00000.parquet", 735000),
+    ("sample/10BT/012_00000.parquet", 732000),
+    ("sample/10BT/013_00000.parquet", 182101),
+]
+
+
+def ensure_fineweb_shard_cached(shard_idx: int, cache_dir: str = "data/cache/fineweb") -> str:
+    abs_cache_dir = os.path.abspath(cache_dir)
+    os.makedirs(abs_cache_dir, exist_ok=True)
+    filename = FINEWEB_10BT_SHARDS[shard_idx][0]
+    local_path = os.path.join(abs_cache_dir, filename)
+
+    if os.path.exists(local_path):
+        return local_path
+
+    for root, _, files in os.walk(abs_cache_dir):
+        for f in files:
+            if f.endswith(".parquet") and f != os.path.basename(filename):
+                try:
+                    os.remove(os.path.join(root, f))
+                    print(f"[Data Cache] Pruned old FineWeb shard '{f}' to preserve disk headroom.")
+                except Exception as e:
+                    print(f"[Data Cache] Warning pruning {f}: {e}")
+
+    print(f"[Data Cache] Downloading FineWeb-Edu shard {shard_idx} ({filename}) to local NVMe...")
+    from huggingface_hub import hf_hub_download
+    path = hf_hub_download(
+        repo_id="HuggingFaceFW/fineweb-edu",
+        repo_type="dataset",
+        filename=filename,
+        local_dir=abs_cache_dir,
+    )
+    return path
+
+
 def download_chunk_with_cursor(
     output_path: str,
     skip_docs: int = 0,
     target_docs: int = 500,
     min_score: int = 3,
+    cache_dir: str = "data/cache/fineweb",
 ) -> Dict:
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    print(f"\n[Data Stream] Seeking to offset {skip_docs:,} and collecting {target_docs} documents...")
+    import pyarrow.parquet as pq
 
-    dataset = load_dataset("HuggingFaceFW/fineweb-edu", name="sample-10BT", split="train", streaming=True)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    total_fineweb_docs = sum(rows for _, rows in FINEWEB_10BT_SHARDS)
+    norm_skip = skip_docs % total_fineweb_docs
+
+    cum = 0
+    curr_shard_idx = 0
+    local_offset = 0
+    for idx, (_, num_rows) in enumerate(FINEWEB_10BT_SHARDS):
+        if cum <= norm_skip < cum + num_rows:
+            curr_shard_idx = idx
+            local_offset = norm_skip - cum
+            break
+        cum += num_rows
 
     collected_docs = 0
-    passed_docs = 0
     total_tokens = 0
+    start_time = time.time()
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        pbar = tqdm(total=target_docs, desc="Downloading partition")
-        for item in dataset:
-            if item.get("int_score", 0) >= min_score:
-                if passed_docs < skip_docs:
-                    passed_docs += 1
-                    continue
-                text = item.get("text", "").strip()
-                if len(text) > 100:
-                    f.write(text + "\n<|endoftext|>\n\n")
-                    total_tokens += item.get("token_count", int(len(text.split()) * 1.3))
+    with open(output_path, "w", encoding="utf-8") as f_out:
+        remaining = target_docs
+        while remaining > 0:
+            shard_rel, shard_rows = FINEWEB_10BT_SHARDS[curr_shard_idx]
+            shard_path = ensure_fineweb_shard_cached(curr_shard_idx, cache_dir)
+            pf = pq.ParquetFile(shard_path)
+
+            available = shard_rows - local_offset
+            take = min(remaining, available)
+
+            rg_start = local_offset // 1000
+            rg_end = (local_offset + take - 1) // 1000
+            table = pf.read_row_groups(list(range(rg_start, rg_end + 1)), columns=["text", "token_count"])
+            offset_in_rg = local_offset - (rg_start * 1000)
+            slice_table = table.slice(offset_in_rg, take)
+
+            texts = slice_table["text"].to_pylist()
+            tokens = slice_table["token_count"].to_pylist()
+
+            for text, tok_count in zip(texts, tokens):
+                text_clean = text.strip()
+                if len(text_clean) > 100:
+                    f_out.write(text_clean + "\n<|endoftext|>\n\n")
+                    total_tokens += tok_count if tok_count else int(len(text_clean.split()) * 1.3)
                     collected_docs += 1
-                    pbar.update(1)
-                    if collected_docs >= target_docs:
-                        break
-        pbar.close()
 
+            remaining -= take
+            if remaining > 0:
+                curr_shard_idx = (curr_shard_idx + 1) % len(FINEWEB_10BT_SHARDS)
+                local_offset = 0
+
+    duration = time.time() - start_time
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
     sha256_hash = compute_file_sha256(output_path)
 
+    print(
+        f"[Data Stream] Cached extraction: {collected_docs:,} docs ({total_tokens:,} tokens, "
+        f"{file_size_mb:.1f} MB) in {duration:.2f}s"
+    )
+
     return {
         "start_offset": skip_docs,
-        "end_offset": skip_docs + collected_docs,
+        "end_offset": skip_docs + target_docs,
         "document_count": collected_docs,
         "approx_tokens": total_tokens,
         "file_size_mb": round(file_size_mb, 2),
@@ -250,43 +329,77 @@ def download_chunk_with_cursor(
     }
 
 
+def ensure_code_cached(cache_dir: str = "data/cache/code") -> str:
+    import gzip
+    abs_cache_dir = os.path.abspath(cache_dir)
+    os.makedirs(abs_cache_dir, exist_ok=True)
+    jsonl_path = os.path.join(abs_cache_dir, "codeparrot.jsonl")
+    if os.path.exists(jsonl_path):
+        return jsonl_path
+
+    from huggingface_hub import hf_hub_download
+    print("[Code Stream] Downloading codeparrot archive to local NVMe...")
+    gz_path = hf_hub_download(
+        repo_id="codeparrot/codeparrot-clean-valid",
+        repo_type="dataset",
+        filename="file-000000000054.json.gz",
+        local_dir=abs_cache_dir,
+    )
+    print("[Code Stream] Decompressing codeparrot archive into local JSONL...")
+    with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(jsonl_path, "w", encoding="utf-8") as fout:
+        for line in fin:
+            fout.write(line)
+    if os.path.exists(gz_path):
+        os.remove(gz_path)
+    return jsonl_path
+
+
 def download_code_chunk_with_cursor(
     output_path: str,
     skip_docs: int = 0,
     target_docs: int = 500,
+    cache_dir: str = "data/cache/code",
 ) -> Dict:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    print(f"\n[Code Stream] Seeking to offset {skip_docs:,} and collecting {target_docs} Python documents...")
+    jsonl_path = ensure_code_cached(cache_dir)
 
-    dataset = load_dataset("codeparrot/codeparrot-clean-valid", split="train", streaming=True)
+    total_code_docs = 61373
+    norm_skip = skip_docs % total_code_docs
 
     collected_docs = 0
-    passed_docs = 0
     total_tokens = 0
+    start_time = time.time()
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        pbar = tqdm(total=target_docs, desc="Downloading code partition")
-        for item in dataset:
-            if passed_docs < skip_docs:
-                passed_docs += 1
-                continue
-            text = item.get("content", "").strip()
-            if len(text) > 40:
-                f.write(text + "\n<|endoftext|>\n\n")
-                total_tokens += int(len(text.split()) * 1.3)
-                collected_docs += 1
-                pbar.update(1)
-                if collected_docs >= target_docs:
-                    break
-        pbar.close()
+    with open(output_path, "w", encoding="utf-8") as f_out:
+        with open(jsonl_path, "r", encoding="utf-8") as f_in:
+            while collected_docs < target_docs:
+                f_in.seek(0)
+                for line_idx, line in enumerate(f_in):
+                    if norm_skip > 0 and line_idx < norm_skip:
+                        continue
+                    if collected_docs >= target_docs:
+                        break
+                    data = json.loads(line)
+                    text = data.get("content", "").strip()
+                    if len(text) > 40:
+                        f_out.write(text + "\n<|endoftext|>\n\n")
+                        total_tokens += int(len(text.split()) * 1.3)
+                        collected_docs += 1
+                norm_skip = 0
 
+    duration = time.time() - start_time
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
     sha256_hash = compute_file_sha256(output_path)
+
+    print(
+        f"[Code Stream] Cached extraction: {collected_docs:,} Python docs ({total_tokens:,} tokens, "
+        f"{file_size_mb:.1f} MB) in {duration:.2f}s"
+    )
 
     return {
         "source": "code",
         "start_offset": skip_docs,
-        "end_offset": skip_docs + collected_docs,
+        "end_offset": skip_docs + target_docs,
         "document_count": collected_docs,
         "approx_tokens": total_tokens,
         "file_size_mb": round(file_size_mb, 2),

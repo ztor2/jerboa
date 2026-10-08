@@ -11,9 +11,9 @@ min_score: 3
 # aihub_dir: data/raw/aihub_test
 interleave_pattern: fineweb,fineweb,fineweb,code
 
-# Compute budget: 1,000 chunks x 1,500 docs (approx 2.5B tokens)
+# Compute budget: 1,000 chunks x 3,000 docs (approx 5.0B tokens)
 chunks: 1000
-docs_per_chunk: 1500
+docs_per_chunk: 3000
 
 # RunPod 2x 4090 DDP hyperparameters:
 # Micro-batch 4 per GPU, seq_len 2048, grad_accum 4
