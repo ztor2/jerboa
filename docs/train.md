@@ -31,6 +31,12 @@ jerboa/
         └── unified/                  # stage_1.pt & stage_2.pt
 ```
 
+> [!NOTE]
+> `checkpoints/` is the active working directory for local training runs and is excluded from Git (`.gitignore`). When weights are fetched from Hugging Face Hub via `from_pretrained("ztor2/jerboa-base")`, they are stored in the user's global cache (`~/.cache/huggingface/hub/`). To download them directly into the project directory for offline use:
+> ```bash
+> huggingface-cli download ztor2/jerboa-base --local-dir checkpoints/base
+> ```
+
 ### Schema Formats
 
 | Stage | Path | Schema Structure |
@@ -123,8 +129,18 @@ make pretrain-ddp GPUS=2 RECIPE=recipes/pretrain.yaml BATCH_SIZE=16
 # Pre-train with live W&B tracking
 python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"
 
-# Resume from latest checkpoint
-python pipeline/pretrain.py --resume auto --chunks 5
+# Resume from latest local checkpoint (same machine)
+python pipeline/pretrain.py --resume auto
+
+# Resume seamlessly in a new environment / fresh pod from Hugging Face Hub (Chunk 668+)
+torchrun --nproc_per_node=2 pipeline/pretrain.py \
+    --recipe recipes/pretrain/runpod_4090_ddp.yaml \
+    --resume ztor2/jerboa-base
+
+# Single GPU or local Mac resumption from Hub
+python pipeline/pretrain.py \
+    --recipe recipes/pretrain/runpod_4090_ddp.yaml \
+    --resume ztor2/jerboa-base
 
 # View training lineage ledger & loss curves locally
 python scripts/tools/history.py
