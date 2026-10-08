@@ -592,6 +592,11 @@ def run_pretrain(
                     outputs = model(input_ids=input_ids, labels=labels)
                     loss = outputs.loss / grad_accum_steps
 
+                if not torch.isfinite(loss):
+                    print(f"\n[Warning] Non-finite loss ({loss.item()}) encountered at chunk {chunk_name}, batch {batch_idx}! Skipping batch.")
+                    optimizer.zero_grad()
+                    continue
+
                 loss.backward()
 
                 running_loss += outputs.loss.item()
@@ -600,7 +605,12 @@ def run_pretrain(
                 is_last_batch = (batch_idx + 1 == total_batches)
 
                 if accum_count % grad_accum_steps == 0 or is_last_batch:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    if not torch.isfinite(grad_norm):
+                        print(f"\n[Warning] Non-finite grad norm ({grad_norm})! Skipping optimizer step.")
+                        optimizer.zero_grad()
+                        continue
+
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad()

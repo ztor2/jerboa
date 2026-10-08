@@ -92,8 +92,15 @@ class JerboaRotaryEmbedding(nn.Module):
 
     def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype):
         self.max_seq_len_cached = seq_len
-        if self.inv_freq.device.type == "meta":
+        if (
+            not hasattr(self, "inv_freq")
+            or self.inv_freq is None
+            or self.inv_freq.device.type == "meta"
+            or not torch.isfinite(self.inv_freq).all()
+            or (self.inv_freq.numel() > 0 and self.inv_freq.max().item() > 2.0)
+        ):
             inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, device=device).float() / self.dim))
+            self.inv_freq = inv_freq
         else:
             inv_freq = self.inv_freq.to(device)
         t = torch.arange(self.max_seq_len_cached, device=device, dtype=torch.float32)
