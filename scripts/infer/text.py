@@ -18,25 +18,26 @@ from model import JerboaConfig, JerboaForCausalLM, get_default_tokenizer
 
 
 def load_model_and_tokenizer(model_path: str, device: torch.device):
-    try:
-        print(f"Loading checkpoint from '{model_path}' (local or Hugging Face Hub)...")
-        tokenizer = get_default_tokenizer(model_path)
-        model = JerboaForCausalLM.from_pretrained(model_path, trust_remote_code=True)
-    except Exception as e:
-        print(f"Notice: Could not load from '{model_path}' ({e}), initializing base JerboaLM...")
-        tokenizer = get_default_tokenizer()
-        config = JerboaConfig(
-            vocab_size=len(tokenizer),
-            hidden_size=768,
-            intermediate_size=2048,
-            num_hidden_layers=16,
-            num_attention_heads=12,
-            num_key_value_heads=4,
-            tie_word_embeddings=True,
-            qk_norm=True,
-        )
-        model = JerboaForCausalLM(config)
+    print(f"Loading checkpoint from '{model_path}' (local or Hugging Face Hub)...")
+    tokenizer = None
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    local_tok = os.path.join(project_root, "data", "tokenizer")
 
+    # Prefer local tokenizer if available to ensure exact 49k vocab match
+    if os.path.exists(local_tok):
+        try:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(local_tok)
+        except Exception:
+            pass
+
+    if tokenizer is None:
+        try:
+            tokenizer = get_default_tokenizer(model_path)
+        except Exception:
+            tokenizer = get_default_tokenizer()
+
+    model = JerboaForCausalLM.from_pretrained(model_path, trust_remote_code=True)
     model.to(device)
     model.eval()
     return model, tokenizer
@@ -47,25 +48,28 @@ def generate_single_prompt(
     tokenizer,
     prompt: str,
     system_prompt: str = "You are Jerboa, an intelligent and helpful AI assistant.",
-    max_new_tokens: int = 120,
-    temperature: float = 0.7,
+    max_new_tokens: int = 80,
+    temperature: float = 0.4,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.15,
+    raw_mode: bool = True,
     stream: bool = True,
 ):
     device = next(model.parameters()).device
-    formatted_prompt = (
-        f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-        f"<|im_start|>user\n{prompt}<|im_end|>\n"
-        f"<|im_start|>assistant\n"
-    )
+    if raw_mode:
+        formatted_prompt = prompt
+        print(f"\n[Prompt]: {prompt}\n[Completion]: ", end="", flush=True)
+    else:
+        formatted_prompt = (
+            f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
+            f"<|im_start|>user\n{prompt}<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+        )
+        print(f"\n[Prompt]: {prompt}\n[Assistant]: ", end="", flush=True)
+
     input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(device)
-
-    print(f"\n[Prompt]: {prompt}\n")
-    print("[Assistant]: ", end="", flush=True)
-
-    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if stream else None
-
     attention_mask = torch.ones_like(input_ids)
+    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if stream else None
 
     with torch.no_grad():
         output_ids = model.generate(
@@ -74,6 +78,7 @@ def generate_single_prompt(
             max_new_tokens=max_new_tokens,
             temperature=temperature,
             top_p=top_p,
+            repetition_penalty=repetition_penalty,
             do_sample=temperature > 0,
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
@@ -83,6 +88,7 @@ def generate_single_prompt(
     if not stream:
         resp = tokenizer.decode(output_ids[0, input_ids.shape[1] :], skip_special_tokens=True)
         print(resp)
+    print()
     print()
 
 
@@ -139,13 +145,15 @@ def interactive_chat_repl(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Inference CLI")
-    default_model = "checkpoints/sft/model" if os.path.exists("checkpoints/sft/model") else "ztor2/jerboa"
-    parser.add_argument("--model", type=str, default=default_model, help="Path to local checkpoint or HF Hub repo id (default: ztor2/jerboa)")
-    parser.add_argument("--prompt", type=str, default=None, help="Single prompt mode")
-    parser.add_argument("--chat", action="store_true", help="Launch interactive multi-turn chat session")
-    parser.add_argument("--max_tokens", type=int, default=100)
-    parser.add_argument("--temperature", type=float, default=0.7)
+    default_model = "ztor2/jerboa-pretrain-checkpoints"
+    parser.add_argument("--model", type=str, default=default_model, help="Path to local checkpoint or HF Hub repo id (default: ztor2/jerboa-pretrain-checkpoints)")
+    parser.add_argument("--prompt", type=str, default=None, help="Input prompt text")
+    parser.add_argument("--chat", action="store_true", help="Launch interactive multi-turn chat session with ChatML format")
+    parser.add_argument("--instruct", action="store_true", help="Format prompt as instruction (ChatML)")
+    parser.add_argument("--max_tokens", type=int, default=80)
+    parser.add_argument("--temperature", type=float, default=0.4)
     parser.add_argument("--top_p", type=float, default=0.9)
+    parser.add_argument("--repetition_penalty", type=float, default=1.15)
     parser.add_argument("--system", type=str, default="You are Jerboa, an intelligent and helpful AI assistant.")
     args = parser.parse_args()
 
@@ -162,7 +170,7 @@ if __name__ == "__main__":
             top_p=args.top_p,
         )
     else:
-        sample_prompt = args.prompt or "Explain how grouped-query attention works in modern LLMs."
+        sample_prompt = args.prompt or "Artificial intelligence is a branch of computer science that"
         generate_single_prompt(
             loaded_model,
             loaded_tokenizer,
@@ -171,4 +179,6 @@ if __name__ == "__main__":
             max_new_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
+            repetition_penalty=args.repetition_penalty,
+            raw_mode=not args.instruct,
         )
