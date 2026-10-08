@@ -649,9 +649,9 @@ def run_pretrain(
 
                 # Graceful Interrupt Handling
                 if interrupt_handler.interrupted:
+                    interrupted_dir = os.path.join(output_dir, "steps", f"interrupted_{chunk_name}")
                     if is_main_process:
                         print(f"\n[Interrupt] Saving emergency pretrain checkpoint for {chunk_name} at step {step_in_chunk + 1}...")
-                        interrupted_dir = os.path.join(output_dir, "steps", f"interrupted_{chunk_name}")
                         os.makedirs(interrupted_dir, exist_ok=True)
                         raw_model = model.module if hasattr(model, "module") else model
                         raw_model.save_pretrained(interrupted_dir)
