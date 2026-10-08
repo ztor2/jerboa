@@ -250,6 +250,50 @@ def download_chunk_with_cursor(
     }
 
 
+def download_code_chunk_with_cursor(
+    output_path: str,
+    skip_docs: int = 0,
+    target_docs: int = 500,
+) -> Dict:
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    print(f"\n[Code Stream] Seeking to offset {skip_docs:,} and collecting {target_docs} Python documents...")
+
+    dataset = load_dataset("codeparrot/codeparrot-clean-valid", split="train", streaming=True)
+
+    collected_docs = 0
+    passed_docs = 0
+    total_tokens = 0
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        pbar = tqdm(total=target_docs, desc="Downloading code partition")
+        for item in dataset:
+            if passed_docs < skip_docs:
+                passed_docs += 1
+                continue
+            text = item.get("content", "").strip()
+            if len(text) > 40:
+                f.write(text + "\n<|endoftext|>\n\n")
+                total_tokens += int(len(text.split()) * 1.3)
+                collected_docs += 1
+                pbar.update(1)
+                if collected_docs >= target_docs:
+                    break
+        pbar.close()
+
+    file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+    sha256_hash = compute_file_sha256(output_path)
+
+    return {
+        "source": "code",
+        "start_offset": skip_docs,
+        "end_offset": skip_docs + collected_docs,
+        "document_count": collected_docs,
+        "approx_tokens": total_tokens,
+        "file_size_mb": round(file_size_mb, 2),
+        "sha256": sha256_hash,
+    }
+
+
 def run_pretrain(
     mode: str = "rolling",
     total_chunks: int = 3,
@@ -488,14 +532,36 @@ def run_pretrain(
         for chunk_idx in range(start_chunk, start_chunk + total_chunks):
             resource_guard.check_and_throttle()
             chunk_name = f"chunk_{chunk_idx:04d}"
-            chunk_source = get_chunk_source(chunk_idx, interleave_pattern) if (aihub_dir and os.path.exists(aihub_dir)) else "fineweb"
+            chunk_source = get_chunk_source(chunk_idx, interleave_pattern)
+            if chunk_source == "aihub" and (not aihub_dir or not os.path.exists(aihub_dir)):
+                chunk_source = "fineweb"
             current_offset = cursors.get(chunk_source, 0)
             if is_main_process:
                 print(f"\n==================================================")
                 print(f"  PROCESSING {chunk_name.upper()} [{chunk_source.upper()}] (Offset: {current_offset:,})")
                 print(f"==================================================")
 
-            if chunk_source == "aihub" and aihub_dir:
+            if chunk_source == "code":
+                if dist_info["is_distributed"]:
+                    if is_main_process:
+                        chunk_meta = download_code_chunk_with_cursor(
+                            output_path=temp_chunk_path,
+                            skip_docs=current_offset,
+                            target_docs=docs_per_chunk,
+                        )
+                        with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
+                            json.dump(chunk_meta, f)
+                    dist.barrier()
+                    if not is_main_process:
+                        with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
+                            chunk_meta = json.load(f)
+                else:
+                    chunk_meta = download_code_chunk_with_cursor(
+                        output_path=temp_chunk_path,
+                        skip_docs=current_offset,
+                        target_docs=docs_per_chunk,
+                    )
+            elif chunk_source == "aihub" and aihub_dir:
                 if dist_info["is_distributed"]:
                     if is_main_process:
                         chunk_meta = get_aihub_chunk(

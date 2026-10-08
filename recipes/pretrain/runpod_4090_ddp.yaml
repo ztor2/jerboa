@@ -7,9 +7,9 @@ source: HuggingFaceFW/fineweb-edu
 subset: sample-10BT
 min_score: 3
 
-# Multilingual Interleaving (Blocked schedule: 50% English, 35% Korean, 15% Code)
-aihub_dir: data/raw/aihub_test
-interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
+# English & Code Interleaving (Blocked schedule: 75% English Edu, 25% Python Code)
+# aihub_dir: data/raw/aihub_test
+interleave_pattern: fineweb,fineweb,fineweb,code
 
 # Compute budget: 1,000 chunks x 1,500 docs (approx 2.5B tokens)
 chunks: 1000
