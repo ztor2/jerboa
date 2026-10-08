@@ -171,6 +171,26 @@ The project's "Rolling-Buffer Pre-training" paradigm originally targeted data ep
 
 ---
 
+### Case 7: Rotary Embedding `inv_freq` Desync & Non-finite Loss Propagation
+
+#### Symptoms
+```
+Training chunk_0188: 29it [01:04, 2.23s/it, loss=nan, speed=56321 tok/s, lr=3.95e-04]
+```
+Upon resuming pretraining from disk checkpoint, `loss=nan` appeared immediately.
+
+#### Root Cause
+1. `inv_freq` in `JerboaRotaryEmbedding` was registered as a non-persistent buffer (`persistent=False`). When models were re-initialized via `from_pretrained`, Hugging Face's buffer initialization left `inv_freq` populated with uninitialized GPU garbage values (e.g. $7.29 \times 10^{22}$), which blew up RoPE position embeddings in Layer 0.
+2. The pretraining loop had no guardrail before `loss.backward()` and `optimizer.step()`, so non-finite losses propagated NaNs directly into optimizer momentums and ruined subsequent weights.
+
+#### Resolution
+1. **Dynamic RoPE Frequency Validation**:
+   In [model/modeling.py](file:///Users/jc/jerboa/model/modeling.py), `_set_cos_sin_cache` automatically validates `self.inv_freq` and recomputes exact frequencies if the buffer is uninitialized, non-finite, or on meta device.
+2. **Non-finite Loss & Gradient Guards**:
+   In [pipeline/pretrain.py](file:///Users/jc/jerboa/pipeline/pretrain.py), added `torch.isfinite(loss)` and `torch.isfinite(grad_norm)` checks to immediately skip corrupted batches and zero out gradients before they contaminate optimizer state.
+
+---
+
 ## 3. Production Verification & Metrics
 
 Following the applied resolutions, training was launched on the 2x RTX 4090 Secure Cloud instance.
