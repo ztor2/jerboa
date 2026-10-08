@@ -464,7 +464,7 @@ def run_pretrain(
     # 1. Checkpoint resumption or model initialization
     start_chunk = 1
     stream_cursor = 0
-    cursors = {"fineweb": 0, "aihub": 0}
+    cursors = {"fineweb": 0, "aihub": 0, "code": 0}
     cumulative_tokens = 0
     global_step = 0
 
@@ -495,7 +495,7 @@ def run_pretrain(
                 resume_dir = os.path.join(output_dir, "model")
             start_chunk = st.get("next_chunk_idx", 1)
             stream_cursor = st.get("stream_cursor", 0)
-            cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0})
+            cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
             cumulative_tokens = st.get("cumulative_tokens", 0)
             global_step = st.get("global_step", 0)
             if is_main_process:
@@ -511,7 +511,7 @@ def run_pretrain(
                     st = json.load(f)
                 start_chunk = st.get("next_chunk_idx", 1)
                 stream_cursor = st.get("stream_cursor", 0)
-                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0})
+                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
         else:
@@ -532,10 +532,11 @@ def run_pretrain(
                     st = json.load(f)
                 start_chunk = st.get("next_chunk_idx", 1)
                 stream_cursor = st.get("stream_cursor", 0)
+                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
                 if is_main_process:
-                    print(f"[Hub Resume] Successfully restored training cursor: Next Chunk {start_chunk}, Offset: {stream_cursor:,}, Cumulative Tokens: {cumulative_tokens:,}")
+                    print(f"[Hub Resume] Successfully restored training cursor: Next Chunk {start_chunk}, Cursors: {cursors}, Cumulative Tokens: {cumulative_tokens:,}")
 
                 # Download training_state.pt for optimizer/scheduler momentum
                 try:
@@ -851,6 +852,7 @@ def run_pretrain(
                             "next_chunk_idx": chunk_idx,
                             "global_step": global_step,
                             "stream_cursor": stream_cursor,
+                            "cursors": cursors,
                             "cumulative_tokens": cur_tokens,
                             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                             "is_interrupted": True,
