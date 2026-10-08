@@ -30,7 +30,7 @@ pipeline_tag: text-generation
 
 **Lightweight Language & Multimodal Model** (in active development)
 
-Jerboa is an ultra-lightweight language and multimodal model (~138M–146M parameters) optimized for Apple Silicon (MPS / Metal) and edge deployments.
+Jerboa is an ultra-lightweight language and multimodal model (~221M parameters) featuring a 28-layer Deep & Thin architecture optimized for Apple Silicon (MPS / Metal) and edge deployments.
 
 ---
 
@@ -38,11 +38,12 @@ Jerboa is an ultra-lightweight language and multimodal model (~138M–146M param
 
 | Attribute | Specification |
 | :--- | :--- |
-| **Language Backbone** | `JerboaForCausalLM` (~138.4M base / ~145.9M with MTP) |
-| **Multimodal Model** | `JerboaVLForConditionalGeneration` (~145.2M) |
-| **Layers & Hidden Dim** | 16 Layers, $d_{{model}}=768$, $d_{{ffn}}=2048$ (SwiGLU) |
-| **Attention** | GQA (12 Query : 4 KV heads), QK-Norm, Interleaved SWA |
-| **Context Length** | 4,096 tokens (extensible to 16K via YaRN) |
+| **Language Backbone** | `JerboaForCausalLM` (~221M parameters) |
+| **Multimodal Model** | `JerboaVLForConditionalGeneration` |
+| **Layers & Hidden Dim** | 28 Layers, $d_{{model}}=768$, $d_{{ffn}}=2048$ (SwiGLU) |
+| **Attention** | GQA (12 Query : 4 KV heads), QK-Norm, Interleaved SWA (window 2048, global every 4 layers) |
+| **Vocabulary & RoPE** | 49,152 BPE Vocab, RoPE $\theta=500,000$ |
+| **Pre-training Volume** | > 1.23 Billion tokens (75% FineWeb-Edu, 25% Python Code) |
 | **Hardware Target** | Apple Silicon (MPS / Metal) & Edge Devices |
 
 ---
