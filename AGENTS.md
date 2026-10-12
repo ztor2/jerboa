@@ -1,5 +1,5 @@
 - When working on complex tasks, summarize the plan for the initial and intermediate actions briefly and communicate it in text.
-- Keep commit messages under 5 words without prefixes (no feat:, fix:, hotfix:, etc.).
+- Keep commit messages under 6 words without prefixes (no feat:, fix:, hotfix:, etc.).
 - If there are major changes to the code or design, reflect them in the docs/ documents after the work is completed.
 - Do not write lengthy comments or explanations at the top of the code. If an explanation is needed, write it in docs/.
 - Avoid excessive use of emojis.
