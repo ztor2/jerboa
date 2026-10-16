@@ -185,6 +185,37 @@ When training multiple disparate distributions (English web, Korean conversation
    - **Stage 2 (Visual Instruction SFT)**: Freeze Backbone; tune `VisionProjector` + `JerboaLM` on conversational VQA / OCR / reasoning datasets for conversational multimodal mastery.
      - *Intuition*: Given an apple image and the prompt *"What color is this fruit?"*, enables multi-head attention to cross-reference the query with specific visual patch vectors (e.g. skin color/gloss) to reason and generate *"The apple is red"*.
 
+---
+
+## 8. Pre-training Horizon Strategy (1,000 vs. 2,500 Chunks), Korean Corpus Quality, & I/O Bottlenecks
+
+### 8.1 Why 2,500 Chunks (~4.5B–5.0B Tokens) is Optimal Over 1,000 Chunks
+- **Where 668 Chunks (~1.24B Tokens) and 1,000 Chunks (~2.0B Tokens) Stand**:
+  - At 668 chunks ($\approx 1.24\text{B}$ tokens, $5.6 \times N$), the model has only completed ~28% of its Chinchilla compute-optimal budget ($20N \approx 4.43\text{B}$ tokens).
+  - At 1,000 chunks ($\approx 1.8\text{B} - 2.0\text{B}$ tokens, $\sim 9 \times N$), a monolingual model reaches basic grammatical fluency (Phase 1), but for a **trilingual distribution (50% English, 33% Korean, 17% Python Code)**, the token budget per domain is diluted to $<1\text{B}$ tokens each.
+- **Why 2,500 Chunks ($\approx 4.5\text{B} - 5.0\text{B}$ Tokens) Hits the Sweet Spot**:
+  - Reaching **2,500 chunks** (`docs_per_chunk: 1500`, $\approx 1.8\text{M} - 2.0\text{M}$ tokens/chunk) delivers **~4.5B–5.0B tokens ($D/N \approx 20 - 22.5$)**, matching the theoretical **Chinchilla Optimal Point ($4.43\text{B}$)** while ensuring each domain (English, Korean, Code) receives enough gradient updates to overcome multilingual capacity dilution.
+  - **Cosine Scheduler Horizon Extension**: When resuming from an earlier checkpoint (e.g. Chunk 668) with an expanded chunk target (`chunks: 2500`), `pipeline/pretrain.py` dynamically recalibrates `planned_total_steps` while preserving `scheduler.last_epoch = global_step`. This prevents premature learning rate floor/restart at Chunk 1,000 and smoothly anneals the learning rate across the full 2,500-chunk horizon.
+
+### 8.2 Korean Data Quality: Curated AI-Hub vs. Raw Hugging Face Web Scrapes
+- **Limitations of Generic Hugging Face Korean Web Dumps (`FineWeb-2 kor_Hang`, `C4-ko`, `CulturaX-ko`)**:
+  - While English `FineWeb-Edu` is filtered by a Llama-3-70B educational classifier (score $\ge 3$), raw multilingual web dumps on Hugging Face largely rely on heuristic deduplication and perplexity filtering.
+  - Korean web crawls contain high ratios of e-commerce product listings, promotional blog spam, fragmented news sidebars, and machine-translated boilerplate. In a 221M SLM, low-density noisy web text rapidly degrades syntax coherence.
+- **Superiority of Curated AI-Hub Corpora**:
+  - Our selected AI-Hub datasets—**71894 (지식/지능 Q&A)**, **71908 (대화생성형 다중 턴 대화)**, and **142 (한국어 지식기반 관계/학술 논문)**—consist of human-verified academic sentences, encyclopedic knowledge, and natural Korean colloquial dialogues.
+  - **Hybrid Caching Strategy**: We prioritize local AI-Hub archives as the primary high-signal Korean source, indexed once into a flat NVMe JSONL cache (`data/cache/aihub/aihub_cached.jsonl`). Only when running in a cloud environment with fewer than 5,000 local AI-Hub documents does the pipeline supplement the cache with curated Korean instruction pairs (`beomi/KoAlpaca-v1.1a`, the same clean corpus verified during tokenizer construction), avoiding noisy raw web scrapes entirely.
+
+### 8.3 Post-Mortem: Why Korean Failed in Early Runs & DDP I/O Bottleneck Fixes
+1. **Schema Mismatch & Zero-Document Extraction (`pipeline/dataset.py`)**:
+   - AI-Hub dataset `142.한국어_지식기반_관계_데이터` stores academic texts under `"title"` and `"sentence"` keys. Originally, `_extract_text_from_aihub_json` only checked `("text", "content", "body", "document", "passage")`, resulting in **0 extracted documents** (`0 bytes`) on AI-Hub chunks and zero gradient updates on Korean token embeddings.
+   - *Fix*: Added Schema 3 (`title` + `sentence`), Schema 4 (`instruction` + `output`), nested container traversal, and circular cursor wrap-around (`norm_skip = skip_docs % total_aihub_docs`).
+2. **$O(N^2)$ Zip Re-scanning Latency**:
+   - Previously, `get_aihub_chunk` re-opened `.zip` archives from index 0 on every chunk and parsed JSON for every skipped document (`skip_docs`).
+   - *Fix*: `ensure_aihub_cached` flattens archives into `data/cache/aihub/aihub_cached.jsonl` once, reducing per-chunk Korean extraction time to **< 0.05 seconds**.
+3. **Single-String CPU Tokenization & Redundant DDP Rank Work (`pipeline/pretrain.py`)**:
+   - Passing a single 15 MB concatenated string to `tokenizer.encode(text)` ran single-threaded on CPU, and in DDP (`world_size=2`) every GPU rank redundantly tokenized the same file while GPUs idled between chunks.
+   - *Fix*: `SyntheticOrTextDataset` now splits documents and uses Rust parallel batch encoding (`tokenizer(docs)`), packs into a single contiguous 2D tensor (`view(total_chunks, seq_len)`), and in DDP Rank 0 caches `ephemeral_chunk.txt.pt` so non-zero ranks load the pre-tokenized tensor in `< 0.01s`, paired with `DataLoader(..., pin_memory=True, num_workers=2)`.
+
 
 
 

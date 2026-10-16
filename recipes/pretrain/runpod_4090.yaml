@@ -11,8 +11,8 @@ min_score: 3
 aihub_dir: data/raw/aihub_test
 interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
 
-# Compute budget: 1,000 chunks x 1,500 docs (approx 2.5B tokens)
-chunks: 1000
+# Compute budget: 2,500 chunks x 1,500 docs (approx 4.5B - 5.0B tokens, Chinchilla 20N Optimal)
+chunks: 2500
 docs_per_chunk: 1500
 
 # RTX 4090 Tuned Hyperparameters:

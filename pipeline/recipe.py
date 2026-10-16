@@ -16,7 +16,12 @@ def apply_recipe(args: argparse.Namespace, default_recipe: Optional[str] = None)
 
         for k, v in recipe_data.items():
             if hasattr(args, k):
-                cli_flags = [f"--{k}", f"--{k.replace('_', '-')}"]
+                cli_flags = [
+                    f"--{k}",
+                    f"--{k.replace('_', '-')}",
+                    f"--no_{k}",
+                    f"--no-{k.replace('_', '-')}",
+                ]
                 was_passed = any(arg.split("=")[0] in cli_flags for arg in sys.argv[1:])
                 if not was_passed:
                     setattr(args, k, v)

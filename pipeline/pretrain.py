@@ -122,24 +122,46 @@ class SyntheticOrTextDataset(Dataset):
         vocab_size: int = 32768,
         text_file: Optional[str] = None,
         tokenizer=None,
+        tensor_cache_path: Optional[str] = None,
     ):
         self.seq_len = seq_len
-        self.data = []
+        self.data = None
 
-        if text_file and os.path.exists(text_file) and tokenizer:
+        if tensor_cache_path and os.path.exists(tensor_cache_path):
+            self.data = torch.load(tensor_cache_path, map_location="cpu")
+        elif text_file and os.path.exists(text_file) and tokenizer:
             with open(text_file, "r", encoding="utf-8") as f:
                 text = f.read()
-            tokens = tokenizer.encode(text, add_special_tokens=False)
+            docs = [d for d in text.split("\n<|endoftext|>\n\n") if d.strip()]
+            if not docs:
+                docs = [text] if text.strip() else []
+
+            tokens: List[int] = []
+            if docs:
+                eos_id = tokenizer.eos_token_id
+                try:
+                    batch_encoded = tokenizer(docs, add_special_tokens=False)["input_ids"]
+                    for seq in batch_encoded:
+                        tokens.extend(seq)
+                        if eos_id is not None:
+                            tokens.append(eos_id)
+                except Exception:
+                    tokens = tokenizer.encode(text, add_special_tokens=False)
+
             total_chunks = len(tokens) // seq_len
-            for i in range(total_chunks):
-                chunk = tokens[i * seq_len : (i + 1) * seq_len]
-                self.data.append(torch.tensor(chunk, dtype=torch.long))
+            if total_chunks > 0:
+                flat_tensor = torch.tensor(tokens[: total_chunks * seq_len], dtype=torch.long)
+                self.data = flat_tensor.view(total_chunks, seq_len).contiguous()
+            else:
+                self.data = torch.empty((0, seq_len), dtype=torch.long)
+
+            if tensor_cache_path:
+                torch.save(self.data, tensor_cache_path)
         else:
-            for i in range(num_samples):
-                seq = torch.randint(4, vocab_size - 10, (seq_len,), dtype=torch.long)
-                seq[0] = 1
-                seq[-1] = 2
-                self.data.append(seq)
+            seqs = torch.randint(4, vocab_size - 10, (num_samples, seq_len), dtype=torch.long)
+            seqs[:, 0] = 1
+            seqs[:, -1] = 2
+            self.data = seqs
 
     def __len__(self):
         return len(self.data)
@@ -610,10 +632,12 @@ def run_pretrain(
 
     if mode == "rolling":
         # Traceable Rolling-Buffer Pre-training (1-Epoch per chunk)
-        # 1 doc avg ~1,500 tokens -> docs_per_chunk * 1500 tokens / (batch_size * grad_accum * seq_len)
-        tokens_per_step = max(batch_size * grad_accum_steps * seq_len, 1)
+        # 1 doc avg ~1,500 tokens -> docs_per_chunk * 1500 tokens / (batch_size * grad_accum * seq_len * world_size)
+        tokens_per_step = max(batch_size * grad_accum_steps * seq_len * dist_info["world_size"], 1)
         est_steps_per_chunk = max(int((docs_per_chunk * 1500) / tokens_per_step), 1)
-        planned_total_steps = total_chunks * est_steps_per_chunk
+        end_chunk = total_chunks + 1 if start_chunk <= total_chunks else start_chunk + total_chunks
+        target_total_chunks = end_chunk - 1
+        planned_total_steps = max(target_total_chunks * est_steps_per_chunk, global_step + est_steps_per_chunk)
 
         optimizer, scheduler = create_optimizer_and_scheduler(
             model=model,
@@ -637,23 +661,34 @@ def run_pretrain(
                     optimizer.load_state_dict(st_pt["optimizer_state"])
                 if "scheduler_state" in st_pt:
                     scheduler.load_state_dict(st_pt["scheduler_state"])
-                print(f"[Resume] Successfully restored optimizer momentum and scheduler states from '{state_pt_file}'")
+                    # Ensure Cosine decay horizon matches updated target_total_chunks
+                    if global_step > 0 and scheduler.last_epoch != global_step:
+                        scheduler.last_epoch = global_step
+                if is_main_process:
+                    print(
+                        f"[Resume] Restored optimizer & cosine scheduler state from '{state_pt_file}' "
+                        f"(Step {global_step:,} / Target {planned_total_steps:,} steps across {target_total_chunks} chunks)"
+                    )
             except Exception as e:
-                print(f"[Resume] Notice: Could not restore optimizer/scheduler state: {e}")
+                if is_main_process:
+                    print(f"[Resume] Notice: Could not restore optimizer/scheduler state: {e}")
 
         temp_chunk_path = "data/ephemeral_chunk.txt"
+        tensor_cache_path = temp_chunk_path + ".pt"
 
-        for chunk_idx in range(start_chunk, start_chunk + total_chunks):
+        for chunk_idx in range(start_chunk, end_chunk):
             resource_guard.check_and_throttle()
             chunk_name = f"chunk_{chunk_idx:04d}"
             chunk_source = get_chunk_source(chunk_idx, interleave_pattern)
-            if chunk_source == "aihub" and (not aihub_dir or not os.path.exists(aihub_dir)):
+            if chunk_source == "aihub" and not aihub_dir:
                 chunk_source = "fineweb"
             current_offset = cursors.get(chunk_source, 0)
             if is_main_process:
                 print(f"\n==================================================")
-                print(f"  PROCESSING {chunk_name.upper()} [{chunk_source.upper()}] (Offset: {current_offset:,})")
+                print(f"  PROCESSING {chunk_name.upper()} / {target_total_chunks:04d} [{chunk_source.upper()}] (Offset: {current_offset:,})")
                 print(f"==================================================")
+                if os.path.exists(tensor_cache_path):
+                    os.remove(tensor_cache_path)
 
             if chunk_source == "code":
                 if dist_info["is_distributed"]:
@@ -724,11 +759,32 @@ def run_pretrain(
             stream_cursor = cursors.get("fineweb", chunk_meta["end_offset"])
             chunk_tokens = chunk_meta["approx_tokens"]
 
-            dataset = SyntheticOrTextDataset(
-                seq_len=seq_len,
-                text_file=temp_chunk_path,
-                tokenizer=tokenizer,
-            )
+            if dist_info["is_distributed"]:
+                if is_main_process:
+                    dataset = SyntheticOrTextDataset(
+                        seq_len=seq_len,
+                        text_file=temp_chunk_path,
+                        tokenizer=tokenizer,
+                        tensor_cache_path=tensor_cache_path,
+                    )
+                dist.barrier()
+                if not is_main_process:
+                    dataset = SyntheticOrTextDataset(
+                        seq_len=seq_len,
+                        text_file=temp_chunk_path,
+                        tokenizer=tokenizer,
+                        tensor_cache_path=tensor_cache_path,
+                    )
+            else:
+                dataset = SyntheticOrTextDataset(
+                    seq_len=seq_len,
+                    text_file=temp_chunk_path,
+                    tokenizer=tokenizer,
+                )
+
+            use_pin_memory = (device.type == "cuda")
+            dl_workers = 2 if device.type == "cuda" else 0
+
             if dist_info["is_distributed"]:
                 sampler = DistributedSampler(
                     dataset,
@@ -738,11 +794,27 @@ def run_pretrain(
                     drop_last=False,
                 )
                 sampler.set_epoch(chunk_idx)
-                dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=batch_size,
+                    sampler=sampler,
+                    pin_memory=use_pin_memory,
+                    num_workers=dl_workers,
+                )
             else:
-                dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+                dataloader = DataLoader(
+                    dataset,
+                    batch_size=batch_size,
+                    shuffle=True,
+                    pin_memory=use_pin_memory,
+                    num_workers=dl_workers,
+                )
 
             total_batches = len(dataloader)
+            if total_batches == 0:
+                if is_main_process:
+                    print(f"[Warning] {chunk_name} yielded 0 batches; skipping chunk.")
+                continue
             effective_chunk_steps = max(total_batches // grad_accum_steps, 1)
 
             if is_main_process:
@@ -972,6 +1044,8 @@ def run_pretrain(
                     print(f"Reclaimed disk space: deleted ephemeral file '{temp_chunk_path}'")
                 if os.path.exists(temp_chunk_path + ".meta.json"):
                     os.remove(temp_chunk_path + ".meta.json")
+                if os.path.exists(tensor_cache_path):
+                    os.remove(tensor_cache_path)
 
             if dist_info["is_distributed"]:
                 dist.barrier()
