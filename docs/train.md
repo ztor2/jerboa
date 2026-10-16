@@ -113,7 +113,9 @@ flowchart LR
 
 ### ① Pre-training (`pipeline/pretrain.py`)
 - **Curriculum & Data Strategy**: See [docs/pretrain_data_plan.md](file:///Users/jc/jerboa/docs/pretrain_data_plan.md) for complete token scaling estimates, dataset inventory, and two-stage curriculum recipes.
-- **Rolling-Buffer Mode**: Streams chunks (e.g., 500 docs), calculates SHA-256 hashes, logs token counts, trains on MPS, and removes raw text to maintain near-zero disk overhead.
+- **Rolling-Buffer Mode**: Streams chunks (e.g., 1,500 docs), calculates SHA-256 hashes, logs token counts, and removes ephemeral text to maintain near-zero disk overhead.
+- **Cloud Korean Cache (`ztor2/jerboa-korean-pretrain`)**: When full local AI-Hub zip archives are absent (e.g., on fresh cloud GPU pods), `ensure_aihub_cached` automatically downloads the pre-indexed, deterministically shuffled Korean corpus (AI-Hub 71894 + 71908 + 142 + KoAlpaca) from the private Hugging Face dataset repository into local NVMe.
+- **CUDA Kernel Fusion (`--compile`)**: Enables `torch.compile` Inductor kernel fusion and `high` float32 matmul precision on CUDA GPUs (enabled by default in RunPod recipes).
 - **In-Memory / File Modes**: `--mode stream` (0 MB disk) or `--text_file <path>`.
 
 ```bash
@@ -132,7 +134,7 @@ python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"
 # Resume from latest local checkpoint (same machine)
 python pipeline/pretrain.py --resume auto
 
-# Resume seamlessly in a new environment / fresh pod from Hugging Face Hub (Chunk 668+)
+# Resume seamlessly in a new environment / fresh pod from Hugging Face Hub (Chunk 668 -> 2500)
 torchrun --nproc_per_node=2 pipeline/pretrain.py \
     --recipe recipes/pretrain/runpod_4090_ddp.yaml \
     --resume ztor2/jerboa-base

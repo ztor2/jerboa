@@ -30,6 +30,7 @@ weight_decay: 0.1
 resume: auto
 enable_mtp: true
 gradient_checkpointing: true
+compile: true
 save_total_limit: 2
 
 # Guardrails

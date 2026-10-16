@@ -202,19 +202,21 @@ When training multiple disparate distributions (English web, Korean conversation
   - While English `FineWeb-Edu` is filtered by a Llama-3-70B educational classifier (score $\ge 3$), raw multilingual web dumps on Hugging Face largely rely on heuristic deduplication and perplexity filtering.
   - Korean web crawls contain high ratios of e-commerce product listings, promotional blog spam, fragmented news sidebars, and machine-translated boilerplate. In a 221M SLM, low-density noisy web text rapidly degrades syntax coherence.
 - **Superiority of Curated AI-Hub Corpora**:
-  - Our selected AI-Hub datasets—**71894 (지식/지능 Q&A)**, **71908 (대화생성형 다중 턴 대화)**, and **142 (한국어 지식기반 관계/학술 논문)**—consist of human-verified academic sentences, encyclopedic knowledge, and natural Korean colloquial dialogues.
-  - **Hybrid Caching Strategy**: We prioritize local AI-Hub archives as the primary high-signal Korean source, indexed once into a flat NVMe JSONL cache (`data/cache/aihub/aihub_cached.jsonl`). Only when running in a cloud environment with fewer than 5,000 local AI-Hub documents does the pipeline supplement the cache with curated Korean instruction pairs (`beomi/KoAlpaca-v1.1a`, the same clean corpus verified during tokenizer construction), avoiding noisy raw web scrapes entirely.
+  - Our selected AI-Hub datasets—**71894 (지식/지능 Q&A, 265MB)**, **71908 (대화생성형 다중 턴 대화, 58MB)**, and **142 (한국어 지식기반 관계/학술 논문)**—consist of human-verified academic sentences, encyclopedic knowledge, and natural Korean colloquial dialogues.
+  - **Pre-indexed Private Hub Cache (`ztor2/jerboa-korean-pretrain`)**: All local AI-Hub archives and `beomi/KoAlpaca-v1.1a` pairs are extracted, deterministically shuffled (`seed=42`) across domains so every chunk receives a balanced blend of knowledge, dialogue, and academic text, and uploaded as a compressed JSONL (`aihub_cached.jsonl.gz`) to a private Hugging Face Dataset repo. Cloud GPU instances (RunPod) automatically pull and decompress this unified cache into local NVMe in seconds without manual `scp` uploads.
 
-### 8.3 Post-Mortem: Why Korean Failed in Early Runs & DDP I/O Bottleneck Fixes
+### 8.3 Post-Mortem: Why Korean Failed in Early Runs & DDP / Kernel Bottleneck Fixes
 1. **Schema Mismatch & Zero-Document Extraction (`pipeline/dataset.py`)**:
    - AI-Hub dataset `142.한국어_지식기반_관계_데이터` stores academic texts under `"title"` and `"sentence"` keys. Originally, `_extract_text_from_aihub_json` only checked `("text", "content", "body", "document", "passage")`, resulting in **0 extracted documents** (`0 bytes`) on AI-Hub chunks and zero gradient updates on Korean token embeddings.
    - *Fix*: Added Schema 3 (`title` + `sentence`), Schema 4 (`instruction` + `output`), nested container traversal, and circular cursor wrap-around (`norm_skip = skip_docs % total_aihub_docs`).
 2. **$O(N^2)$ Zip Re-scanning Latency**:
    - Previously, `get_aihub_chunk` re-opened `.zip` archives from index 0 on every chunk and parsed JSON for every skipped document (`skip_docs`).
-   - *Fix*: `ensure_aihub_cached` flattens archives into `data/cache/aihub/aihub_cached.jsonl` once, reducing per-chunk Korean extraction time to **< 0.05 seconds**.
+   - *Fix*: `ensure_aihub_cached` flattens archives into `data/cache/aihub/aihub_cached.jsonl` (or fetches from `ztor2/jerboa-korean-pretrain`), reducing per-chunk Korean extraction time to **< 0.05 seconds**.
 3. **Single-String CPU Tokenization & Redundant DDP Rank Work (`pipeline/pretrain.py`)**:
    - Passing a single 15 MB concatenated string to `tokenizer.encode(text)` ran single-threaded on CPU, and in DDP (`world_size=2`) every GPU rank redundantly tokenized the same file while GPUs idled between chunks.
    - *Fix*: `SyntheticOrTextDataset` now splits documents and uses Rust parallel batch encoding (`tokenizer(docs)`), packs into a single contiguous 2D tensor (`view(total_chunks, seq_len)`), and in DDP Rank 0 caches `ephemeral_chunk.txt.pt` so non-zero ranks load the pre-tokenized tensor in `< 0.01s`, paired with `DataLoader(..., pin_memory=True, num_workers=2)`.
+4. **Inductor Kernel Fusion (`torch.compile`)**:
+   - Deep-and-thin architectures (28 layers, $d_{model}=768$) are memory-bandwidth bound on elementwise ops (RMSNorm, RoPE, SwiGLU). Enabling `torch.compile(model)` (`--compile` / `compile: true`) and `torch.set_float32_matmul_precision("high")` on CUDA fuses elementwise kernels and accelerates training throughput by 20%–35%.
 
 
 

@@ -229,8 +229,12 @@ def ensure_aihub_cached(
     raw_dir: Union[str, Path],
     cache_dir: str = "data/cache/aihub",
     min_chars: int = 40,
+    hub_repo_id: str = "ztor2/jerboa-korean-pretrain",
 ) -> tuple[str, int]:
-    """Build or reuse a flat NVMe JSONL cache from AI-Hub archives to eliminate O(N^2) zip re-scanning."""
+    """Build or reuse a flat NVMe JSONL cache from AI-Hub archives or HF Hub to eliminate O(N^2) zip re-scanning."""
+    import gzip
+    import random
+
     abs_cache_dir = os.path.abspath(cache_dir)
     os.makedirs(abs_cache_dir, exist_ok=True)
     jsonl_path = os.path.join(abs_cache_dir, "aihub_cached.jsonl")
@@ -243,38 +247,76 @@ def ensure_aihub_cached(
         try:
             with open(meta_path, "r", encoding="utf-8") as f:
                 meta = json.load(f)
-            if meta.get("archive_sig") == archive_sig and meta.get("total_docs", 0) > 0:
-                return jsonl_path, int(meta["total_docs"])
+            cached_docs = int(meta.get("total_docs", 0))
+            if cached_docs >= 50000 or (meta.get("archive_sig") == archive_sig and cached_docs > 0):
+                return jsonl_path, cached_docs
         except Exception:
             pass
 
-    print(f"[AI-Hub Cache] Indexing Korean archives from '{raw_dir}' into local flat JSONL...")
-    total_docs = 0
-    with open(jsonl_path, "w", encoding="utf-8") as fout:
-        for doc in dataset.iter_raw_documents(skip_docs=0):
-            fout.write(json.dumps({"text": doc}, ensure_ascii=False) + "\n")
-            total_docs += 1
+    # If full local AI-Hub archives are not present (e.g. on cloud GPU), pull pre-indexed cache from HF Hub
+    if len(archive_sig) <= 1 and hub_repo_id:
+        try:
+            from huggingface_hub import hf_hub_download
+            print(f"[AI-Hub Cache] Downloading pre-indexed Korean corpus from Hugging Face Hub ('{hub_repo_id}')...")
+            gz_path = hf_hub_download(
+                repo_id=hub_repo_id,
+                repo_type="dataset",
+                filename="aihub_cached.jsonl.gz",
+                local_dir=abs_cache_dir,
+            )
+            hub_meta_path = hf_hub_download(
+                repo_id=hub_repo_id,
+                repo_type="dataset",
+                filename="aihub_cached.meta.json",
+                local_dir=abs_cache_dir,
+            )
+            print("[AI-Hub Cache] Decompressing Korean corpus into local NVMe JSONL...")
+            with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(jsonl_path, "w", encoding="utf-8") as fout:
+                for line in fin:
+                    fout.write(line)
+            if os.path.exists(gz_path):
+                os.remove(gz_path)
+            with open(hub_meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta["source"] = "hf_hub"
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+            total_docs = int(meta.get("total_docs", 1))
+            print(f"[AI-Hub Cache] Ready: {total_docs:,} Korean documents loaded from Hub.")
+            return jsonl_path, max(total_docs, 1)
+        except Exception as e:
+            print(f"[AI-Hub Cache] Notice: Hub cache unavailable ({e}); falling back to local indexing.")
 
-        if total_docs < 5000:
-            try:
-                from datasets import load_dataset
-                print(f"[AI-Hub Cache] Local archives yielded {total_docs:,} docs; supplementing with curated KoAlpaca-v1.1a...")
-                ds = load_dataset("beomi/KoAlpaca-v1.1a", split="train")
-                for item in ds:
-                    inst = (item.get("instruction") or "").strip()
-                    out = (item.get("output") or "").strip()
-                    if inst and out:
-                        doc = f"질문: {inst}\n답변: {out}"
-                        if len(doc) >= min_chars:
-                            fout.write(json.dumps({"text": doc}, ensure_ascii=False) + "\n")
-                            total_docs += 1
-            except Exception as e:
-                print(f"[AI-Hub Cache] Notice: Could not supplement from HuggingFace: {e}")
+    print(f"[AI-Hub Cache] Indexing Korean archives from '{raw_dir}' into local flat JSONL...")
+    all_docs: List[str] = list(dataset.iter_raw_documents(skip_docs=0))
+    print(f"[AI-Hub Cache] Extracted {len(all_docs):,} documents from local AI-Hub archives.")
+
+    try:
+        from datasets import load_dataset
+        print("[AI-Hub Cache] Merging curated KoAlpaca-v1.1a conversational pairs...")
+        ds = load_dataset("beomi/KoAlpaca-v1.1a", split="train")
+        for item in ds:
+            inst = (item.get("instruction") or "").strip()
+            out = (item.get("output") or "").strip()
+            if inst and out:
+                doc = f"질문: {inst}\n답변: {out}"
+                if len(doc) >= min_chars:
+                    all_docs.append(doc)
+    except Exception as e:
+        print(f"[AI-Hub Cache] Notice: Could not supplement from HuggingFace: {e}")
+
+    rng = random.Random(42)
+    rng.shuffle(all_docs)
+
+    total_docs = len(all_docs)
+    with open(jsonl_path, "w", encoding="utf-8") as fout:
+        for doc in all_docs:
+            fout.write(json.dumps({"text": doc}, ensure_ascii=False) + "\n")
 
     with open(meta_path, "w", encoding="utf-8") as fmeta:
-        json.dump({"archive_sig": archive_sig, "total_docs": total_docs}, fmeta, indent=2)
+        json.dump({"archive_sig": archive_sig, "total_docs": total_docs, "source": "local_build"}, fmeta, indent=2)
 
-    print(f"[AI-Hub Cache] Indexed {total_docs:,} Korean documents at '{jsonl_path}'.")
+    print(f"[AI-Hub Cache] Indexed and shuffled {total_docs:,} Korean documents at '{jsonl_path}'.")
     return jsonl_path, max(total_docs, 1)
 
 

@@ -429,6 +429,12 @@ def download_code_chunk_with_cursor(
     }
 
 
+def unwrap_model(m: torch.nn.Module) -> torch.nn.Module:
+    """Unwrap DDP and torch.compile wrappers to access the underlying PreTrainedModel."""
+    raw = m.module if hasattr(m, "module") else m
+    return getattr(raw, "_orig_mod", raw)
+
+
 def run_pretrain(
     mode: str = "rolling",
     total_chunks: int = 3,
@@ -453,6 +459,7 @@ def run_pretrain(
     interleave_pattern: str = "fineweb,aihub",
     gradient_checkpointing: bool = False,
     save_total_limit: int = 2,
+    compile_model: bool = False,
 ):
     """Unified pre-training entry point."""
     dist_info = setup_distributed()
@@ -462,6 +469,9 @@ def run_pretrain(
         device = torch.device(f"cuda:{dist_info['local_rank']}")
     else:
         device = get_device()
+
+    if device.type == "cuda":
+        torch.set_float32_matmul_precision("high")
 
     if is_main_process:
         os.makedirs(output_dir, exist_ok=True)
@@ -595,6 +605,10 @@ def run_pretrain(
         model.gradient_checkpointing_enable()
         if is_main_process:
             print("[Optimization] Activation Gradient Checkpointing Enabled (peak VRAM reduced to ~8-11 GB)")
+    if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
+        if is_main_process:
+            print("[Optimization] Compiling model with torch.compile (Inductor kernel fusion enabled)...")
+        model = torch.compile(model)
     if dist_info["is_distributed"]:
         model = torch.nn.parallel.DistributedDataParallel(
             model,
@@ -915,7 +929,7 @@ def run_pretrain(
                     if is_main_process:
                         print(f"\n[Interrupt] Saving emergency pretrain checkpoint for {chunk_name} at step {step_in_chunk + 1}...")
                         os.makedirs(interrupted_dir, exist_ok=True)
-                        raw_model = model.module if hasattr(model, "module") else model
+                        raw_model = unwrap_model(model)
                         raw_model.save_pretrained(interrupted_dir)
                         tokenizer.save_pretrained(interrupted_dir)
                         cur_tokens = cumulative_tokens + int((step_in_chunk / max(effective_chunk_steps, 1)) * chunk_tokens)
@@ -974,7 +988,7 @@ def run_pretrain(
                 steps_dir = os.path.join(output_dir, "steps")
                 os.makedirs(steps_dir, exist_ok=True)
                 ckpt_dir = os.path.join(steps_dir, chunk_name)
-                raw_model = model.module if hasattr(model, "module") else model
+                raw_model = unwrap_model(model)
                 raw_model.save_pretrained(ckpt_dir)
                 tokenizer.save_pretrained(ckpt_dir)
 
@@ -1205,7 +1219,7 @@ def run_pretrain(
 
         # 3. Base model save to checkpoints/pretrain/model
         final_path = os.path.join(output_dir, "model")
-        raw_model = model.module if hasattr(model, "module") else model
+        raw_model = unwrap_model(model)
         raw_model.save_pretrained(final_path)
         tokenizer.save_pretrained(final_path)
         print(f"\nPre-training completed! Base model saved to '{final_path}'")
@@ -1252,6 +1266,8 @@ if __name__ == "__main__":
     parser.add_argument("--gradient_checkpointing", action="store_true", default=False, help="Enable activation gradient checkpointing for VRAM efficiency")
     parser.add_argument("--no_gradient_checkpointing", action="store_false", dest="gradient_checkpointing", help="Disable gradient checkpointing")
     parser.add_argument("--save_total_limit", type=int, default=2, help="Maximum number of step checkpoints to keep on disk (default: 2)")
+    parser.add_argument("--compile", action="store_true", default=False, help="Enable torch.compile kernel fusion on CUDA")
+    parser.add_argument("--no_compile", action="store_false", dest="compile", help="Disable torch.compile")
     args = parser.parse_args()
     args = apply_recipe(args, args.recipe or default_recipe)
 
@@ -1279,4 +1295,5 @@ if __name__ == "__main__":
         interleave_pattern=getattr(args, "interleave_pattern", "fineweb,fineweb,aihub,aihub,fineweb,code"),
         gradient_checkpointing=getattr(args, "gradient_checkpointing", False),
         save_total_limit=getattr(args, "save_total_limit", 2),
+        compile_model=getattr(args, "compile", False),
     )
