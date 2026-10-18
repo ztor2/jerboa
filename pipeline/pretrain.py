@@ -616,8 +616,8 @@ def run_pretrain(
             print("[Optimization] Activation Gradient Checkpointing Enabled (peak VRAM reduced to ~8-11 GB)")
     if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
         try:
-            import torch._dynamo
-            torch._dynamo.config.suppress_errors = True
+            from torch import _dynamo
+            _dynamo.config.suppress_errors = True
         except Exception:
             pass
         if is_main_process:
