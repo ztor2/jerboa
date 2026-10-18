@@ -351,23 +351,39 @@ def download_chunk_with_cursor(
     }
 
 
-def ensure_code_cached(cache_dir: str = "data/cache/code") -> str:
+DOCS_PER_CODE_SHARD = 100_000
+NUM_CODE_TRAIN_SHARDS = 53
+
+
+def ensure_code_cached(shard_num: int = 1, cache_dir: str = "data/cache/code") -> str:
     import gzip
     abs_cache_dir = os.path.abspath(cache_dir)
     os.makedirs(abs_cache_dir, exist_ok=True)
-    jsonl_path = os.path.join(abs_cache_dir, "codeparrot.jsonl")
+    target_filename = f"codeparrot_train_{shard_num:04d}.jsonl"
+    jsonl_path = os.path.join(abs_cache_dir, target_filename)
     if os.path.exists(jsonl_path):
         return jsonl_path
 
+    # Prune old cached code shards to preserve disk headroom
+    for fname in os.listdir(abs_cache_dir):
+        if fname.endswith(".jsonl") or fname.endswith(".json.gz"):
+            if fname != target_filename:
+                try:
+                    os.remove(os.path.join(abs_cache_dir, fname))
+                    print(f"[Code Stream] Pruned old code shard '{fname}' to preserve disk headroom.")
+                except OSError:
+                    pass
+
     from huggingface_hub import hf_hub_download
-    print("[Code Stream] Downloading codeparrot archive to local NVMe...")
+    gz_filename = f"file-{shard_num:012d}.json.gz"
+    print(f"[Code Stream] Downloading codeparrot-clean-train shard {shard_num}/{NUM_CODE_TRAIN_SHARDS} ({gz_filename}) to local NVMe...")
     gz_path = hf_hub_download(
-        repo_id="codeparrot/codeparrot-clean-valid",
+        repo_id="codeparrot/codeparrot-clean-train",
         repo_type="dataset",
-        filename="file-000000000054.json.gz",
+        filename=gz_filename,
         local_dir=abs_cache_dir,
     )
-    print("[Code Stream] Decompressing codeparrot archive into local JSONL...")
+    print(f"[Code Stream] Decompressing {gz_filename} into local JSONL...")
     with gzip.open(gz_path, "rt", encoding="utf-8") as fin, open(jsonl_path, "w", encoding="utf-8") as fout:
         for line in fin:
             fout.write(line)
@@ -383,10 +399,9 @@ def download_code_chunk_with_cursor(
     cache_dir: str = "data/cache/code",
 ) -> Dict:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    jsonl_path = ensure_code_cached(cache_dir)
-
-    total_code_docs = 61373
-    norm_skip = skip_docs % total_code_docs
+    shard_num = ((skip_docs // DOCS_PER_CODE_SHARD) % NUM_CODE_TRAIN_SHARDS) + 1
+    norm_skip = skip_docs % DOCS_PER_CODE_SHARD
+    jsonl_path = ensure_code_cached(shard_num=shard_num, cache_dir=cache_dir)
 
     collected_docs = 0
     total_tokens = 0
@@ -396,26 +411,33 @@ def download_code_chunk_with_cursor(
         with open(jsonl_path, "r", encoding="utf-8") as f_in:
             while collected_docs < target_docs:
                 f_in.seek(0)
+                progressed = False
                 for line_idx, line in enumerate(f_in):
                     if norm_skip > 0 and line_idx < norm_skip:
                         continue
                     if collected_docs >= target_docs:
                         break
-                    data = json.loads(line)
-                    text = data.get("content", "").strip()
+                    try:
+                        data = json.loads(line)
+                        text = data.get("content", "").strip()
+                    except Exception:
+                        continue
                     if len(text) > 40:
                         f_out.write(text + "\n<|endoftext|>\n\n")
                         total_tokens += int(len(text.split()) * 1.3)
                         collected_docs += 1
+                        progressed = True
                 norm_skip = 0
+                if not progressed:
+                    break
 
     duration = time.time() - start_time
     file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
     sha256_hash = compute_file_sha256(output_path)
 
     print(
-        f"[Code Stream] Cached extraction: {collected_docs:,} Python docs ({total_tokens:,} tokens, "
-        f"{file_size_mb:.1f} MB) in {duration:.2f}s"
+        f"[Code Stream] Cached extraction (shard {shard_num}/{NUM_CODE_TRAIN_SHARDS}): "
+        f"{collected_docs:,} Python docs ({total_tokens:,} tokens, {file_size_mb:.1f} MB) in {duration:.2f}s"
     )
 
     return {
@@ -812,6 +834,7 @@ def run_pretrain(
 
             use_pin_memory = (device.type == "cuda")
             dl_workers = 2 if device.type == "cuda" else 0
+            should_drop_last = bool(compile_model and len(dataset) >= batch_size * dist_info["world_size"])
 
             if dist_info["is_distributed"]:
                 sampler = DistributedSampler(
@@ -819,7 +842,7 @@ def run_pretrain(
                     num_replicas=dist_info["world_size"],
                     rank=dist_info["rank"],
                     shuffle=True,
-                    drop_last=False,
+                    drop_last=should_drop_last,
                 )
                 sampler.set_epoch(chunk_idx)
                 dataloader = DataLoader(
@@ -828,6 +851,7 @@ def run_pretrain(
                     sampler=sampler,
                     pin_memory=use_pin_memory,
                     num_workers=dl_workers,
+                    drop_last=should_drop_last,
                 )
             else:
                 dataloader = DataLoader(
@@ -836,6 +860,7 @@ def run_pretrain(
                     shuffle=True,
                     pin_memory=use_pin_memory,
                     num_workers=dl_workers,
+                    drop_last=should_drop_last,
                 )
 
             total_batches = len(dataloader)

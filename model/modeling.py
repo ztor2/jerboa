@@ -90,6 +90,7 @@ class JerboaRotaryEmbedding(nn.Module):
         self.cos_cached = None
         self.sin_cached = None
 
+    @torch._dynamo.disable
     def _set_cos_sin_cache(self, seq_len: int, device: torch.device, dtype: torch.dtype):
         self.max_seq_len_cached = seq_len
         if (
