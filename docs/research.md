@@ -218,6 +218,47 @@ When training multiple disparate distributions (English web, Korean conversation
 4. **Inductor Kernel Fusion (`torch.compile`)**:
    - Deep-and-thin architectures (28 layers, $d_{model}=768$) are memory-bandwidth bound on elementwise ops (RMSNorm, RoPE, SwiGLU). Enabling `torch.compile(model)` (`--compile` / `compile: true`) and `torch.set_float32_matmul_precision("high")` on CUDA fuses elementwise kernels and accelerates training throughput by 20%–35%.
 
+---
 
+## 9. Cloud GPU Cost-Efficiency, DDP VRAM Mechanics, & Rolling-Buffer Amdahl's Law
 
+### 9.1 Hardware Selection: RTX 5090 vs. RTX 4090 vs. Workstation GPUs
+- **RTX 5090 (Blackwell `sm_120`, 32 GB GDDR7) vs. RTX 4090 (Ada `sm_89`, 24 GB GDDR6X)**:
+  - **Memory Bandwidth & Compute**: RTX 5090 delivers **1,792 GB/s** bandwidth (+78% over 4090's 1,008 GB/s) and ~209.5 TFLOPS dense BF16 compute (+27% over 4090).
+  - **Eliminating Activation Recomputation via 32 GB VRAM**: Because a 221.4M parameter model with Multi-Token Prediction (MTP) at `batch_size: 4, seq_len: 2048` peaks at **~21.9 GB** per GPU without activation checkpointing, a 24 GB RTX 4090 requires `gradient_checkpointing: true` (~12.1 GB peak) to avoid CUDA allocator fragmentation OOMs—incurring a **~20%–25% backward pass recomputation penalty**. On a 32 GB RTX 5090, `gradient_checkpointing: false` leaves ~10 GB of headroom, compounding with hardware bandwidth gains to yield **~1.65x–1.70x higher effective throughput** at only ~1.33x the hourly cost ($1.18/hr vs. $0.89/hr).
+- **Why `PRO 6000 MIG 24GB` and Ampere Workstation Cards (`A4000 / A4500 / A5000`) Underperform in Pre-training**:
+  - **MIG 24GB Slices**: Hardware-partitions a 96 GB RTX PRO 6000 Blackwell into four 1/4 slices (~52 TFLOPS, ~450 GB/s), reducing pre-training speed to ~35% of a single RTX 4090 while restricting multi-GPU NCCL P2P communication.
+  - **Ampere Workstation Cards**: `RTX A5000` (~66.6 TFLOPS) and `RTX A4000` (~38.3 TFLOPS) deliver 2.5x–4.3x lower BF16 throughput than an RTX 4090, resulting in higher total cost per billion tokens despite lower hourly rates.
 
+### 9.2 DDP Replication vs. Single-GPU VRAM (`gradient_checkpointing` vs. `grad_accum`)
+- **Per-GPU Memory Ceiling in DDP**:
+  - Standard `DistributedDataParallel` (DDP) replicates the full model parameters, gradients, and AdamW states (~3.6 GB) on every GPU. Thus, `2x RTX 4090` (48 GB aggregate) still enforces a **24 GB ceiling per GPU** (plus ~0.5 GB for NCCL gradient buckets), whereas `1x RTX 5090` provides a contiguous **32 GB ceiling**.
+- **Zero-VRAM Global Batch Matching via `grad_accum`**:
+  - Whether running on `1x GPU` (`batch_size: 4, grad_accum: 8`) or `2x GPU DDP` (`batch_size: 4, grad_accum: 4`), the global optimization step size remains identical at **32 sequences (65,536 tokens/step)**.
+  - Increasing `grad_accum` from 4 to 8 frees intermediate layer activations after each micro-step and accumulates only gradients in-place, adding **0 bytes** to peak VRAM.
+
+| Per-GPU Memory Component (`batch_size: 4, seq_len: 2048`) | `gradient_checkpointing: true` (4090 24GB) | `gradient_checkpointing: false` (5090 32GB) |
+| :--- | :---: | :---: |
+| **Static State (Weights + Grads + AdamW FP32 States)** | ~3.6 GB | ~3.6 GB |
+| **Main LM Logits + MTP Logits + Cross-Entropy Buffers** | ~5.8 GB | ~5.8 GB |
+| **28-Layer Intermediate Activations** | ~1.2 GB *(recomputed)* | **~10.5 GB** *(retained)* |
+| **PyTorch CUDA Allocator Reserve** | ~1.5 GB | ~2.0 GB |
+| **Peak Per-GPU VRAM** | **~12.1 GB** | **~21.9 GB** |
+
+### 9.3 Rolling-Buffer Amdahl's Law & Multi-GPU Scaling Sweet Spot
+- Empirical telemetry from Chunks 1–667 (`data/manifests/dataset_lineage.jsonl`) shows that each 1,500-document chunk incurs **~28 seconds of fixed non-GPU I/O overhead** (document streaming, SHA-256 hashing, tokenization, and writing ~2.2 GB of `model.safetensors` + `training_state.pt` to disk).
+- Because all GPUs idle during this 28-second boundary, scaling beyond 2 GPUs hits severe diminishing returns:
+
+| Configuration | Hourly Rate | Time / Chunk *(Compute + 28s I/O)* | Remaining 1,833 Chunks | Estimated Total Cost | Efficiency Assessment |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **`1x RTX 5090` (32GB)** | **$1.18 / hr** | **~104s** *(76s + 28s)* | **~53 hrs** *(2.2 days)* | **~$62.5** | **Lowest Total Cost**: Zero DDP overhead; matches `2x 4090` wall-clock time while saving ~$25 |
+| **`2x RTX 5090` (DDP)** | **$2.36 / hr** | **~68s** *(40s + 28s)* | **~35 hrs** *(1.5 days)* | **~$82.6** | **Best Speed/Cost Balance**: Finishes 14 hours faster and costs less than `2x 4090` |
+| **`1x RTX 4090` (24GB)** | $0.89 / hr | ~158s *(130s + 28s)* | ~81 hrs *(3.4 days)* | ~$72.1 | Slower and more expensive overall than `1x 5090` due to recomputation overhead |
+| **`2x RTX 4090` (DDP)** | $1.78 / hr | ~96s *(68s + 28s)* | ~49 hrs *(2.0 days)* | ~$87.2 | Outperformed by both `1x 5090` (cost) and `2x 5090` (cost & speed) |
+| **`4x RTX 4090 / 5090`** | $3.56–$4.72 / hr | ~48–64s *(20–36s + 28s)* | ~25–33 hrs | ~$117+ | **Suboptimal**: ~45%–58% of wall-clock time is spent with 4 GPUs idling on disk/stream I/O |
+
+### 9.4 Hybrid Cloud + Apple Silicon (`M5 Pro 48GB`) Division of Labor
+- An Apple Silicon `M5 Pro (48GB Unified Memory)` achieves ~4,500–6,000 tok/s on MPS (~50–55 chunks per 6-hour daily session, or ~270 chunks per 30-hour workweek—equivalent to ~7 hours on `2x RTX 4090`).
+- Because alternating daily between cloud and local machines incurs repeated 2.2 GB checkpoint transfers and 15–20 minute Hugging Face stream cursor fast-forwarding, the optimal hybrid workflow is:
+  1. **Bulk Pre-training on Cloud (`1x` or `2x RTX 5090`)**: Run uninterrupted through the main pre-training horizon (or up to ~85% / Chunk 2,200, leaving the final 300-chunk cooldown phase for a single local handoff).
+  2. **Post-Training (SFT, DPO, GRPO) & Long-Context Extension on `M5 Pro 48GB`**: Post-training stages require <5% of pre-training FLOPs but benefit enormously from 48 GB of unified memory (2x the memory of a single 24 GB 4090), allowing all instruction tuning, preference alignment, and multimodal projector experiments to run locally at zero cloud cost.

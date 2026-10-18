@@ -38,13 +38,18 @@ fi
 
 source "$VENV_PATH/bin/activate"
 
-# Verify and enforce CUDA inside venv
-if ! python3 -c "import torch; assert torch.cuda.is_available()" 2>/dev/null; then
-    echo "[!] PyTorch does not see CUDA. Installing PyTorch with CUDA 12.4 support..."
+# Verify CUDA availability and actual kernel execution (e.g. Blackwell sm_120 on RTX 5090 requires cu128)
+if ! python3 -c "
+import torch
+assert torch.cuda.is_available(), 'CUDA not available'
+x = torch.ones((4, 4), device='cuda', dtype=torch.bfloat16) @ torch.ones((4, 4), device='cuda', dtype=torch.bfloat16)
+torch.cuda.synchronize()
+" 2>/dev/null; then
+    echo "[!] PyTorch CUDA kernel test failed (e.g. Blackwell sm_120 / RTX 5090 requires CUDA 12.8). Installing PyTorch cu128..."
     pip install --upgrade pip
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 fi
-echo "[✓] CUDA Hardware: $(python3 -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU (No CUDA)')")"
+echo "[✓] CUDA Hardware: $(python3 -c "import torch; print(f'{torch.cuda.get_device_name(0)} (sm_{torch.cuda.get_device_capability(0)[0]}{torch.cuda.get_device_capability(0)[1]}, {torch.cuda.get_device_properties(0).total_memory // (1024**3)}GB)' if torch.cuda.is_available() else 'CPU (No CUDA)')")"
 
 
 # 3. Upgrade pip and install core dependencies
@@ -59,4 +64,4 @@ python3 -c "import torch; print(f'[✓] PyTorch SDPA FlashAttention Backend: {to
 echo ""
 echo "=== [JerboaLM] Environment Setup Complete! ==="
 echo "To activate environment: source $VENV_PATH/bin/activate"
-echo "To start pre-training:   python pipeline/pretrain.py --recipe recipes/pretrain/phase1_base.yaml"
+echo "To start pre-training:   bash scripts/start_runpod.sh"

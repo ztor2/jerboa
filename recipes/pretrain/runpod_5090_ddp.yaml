@@ -1,0 +1,42 @@
+# JerboaLM Pre-training Recipe (RunPod 2x RTX 5090 32GB DDP, 64GB Aggregate VRAM)
+# Blackwell (sm_120) architecture with 1,792 GB/s bandwidth per GPU
+# Disables gradient checkpointing (~22 GB / 32 GB per-GPU VRAM) for maximum throughput
+
+mode: rolling
+source: HuggingFaceFW/fineweb-edu
+subset: sample-10BT
+min_score: 3
+
+# Multilingual Interleaving (Blocked schedule: 50% English Edu, 33% Korean AI-Hub, 17% Python Code)
+aihub_dir: data/raw/aihub_test
+interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
+
+# Compute budget: 2,500 chunks x 1,500 docs (approx 4.5B - 5.0B tokens, Chinchilla 20N Optimal)
+chunks: 2500
+docs_per_chunk: 1500
+
+# RunPod 2x 5090 DDP Hyperparameters:
+# Micro-batch 4 per GPU, seq_len 2048, grad_accum 4
+# Global batch = 4 * 2 GPUs * 4 accum = 32 sequences (65,536 tokens/step)
+batch_size: 4
+grad_accum: 4
+seq_len: 2048
+lr: 4.0e-4
+min_lr: 4.0e-5
+warmup_ratio: 0.03
+weight_decay: 0.1
+
+# Fault tolerance & model architecture
+resume: ztor2/jerboa-base
+enable_mtp: true
+gradient_checkpointing: false
+compile: true
+save_total_limit: 2
+
+# Guardrails
+system_ram_limit: 90.0
+
+# Experiment tracking (WandB Real-time Dashboard Enabled)
+wandb: true
+wandb_project: jerboa
+wandb_run: jerboa-runpod-2x5090-ddp

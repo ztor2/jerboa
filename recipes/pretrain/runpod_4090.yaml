@@ -15,12 +15,11 @@ interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
 chunks: 2500
 docs_per_chunk: 1500
 
-# RTX 4090 Tuned Hyperparameters:
-# Micro-batch 8 feeds full GEMM tiles to 128 SMs.
-# Grad accum 4 -> Global batch 32 (65,536 tokens/step - industry standard SLM scale).
-# VRAM footprint: ~9.5 GB / 24 GB (14.5 GB safety buffer).
-batch_size: 8
-grad_accum: 4
+# RTX 4090 24GB Tuned Hyperparameters (221M Model):
+# Micro-batch 4, seq_len 2048, grad_accum 8 -> Global batch 32 (65,536 tokens/step).
+# VRAM footprint with gradient_checkpointing: ~12.1 GB / 24 GB.
+batch_size: 4
+grad_accum: 8
 seq_len: 2048
 lr: 4.0e-4
 min_lr: 4.0e-5
@@ -28,7 +27,7 @@ warmup_ratio: 0.03
 weight_decay: 0.1
 
 # Fault tolerance & model architecture
-resume: auto
+resume: ztor2/jerboa-base
 enable_mtp: true
 gradient_checkpointing: true
 compile: true

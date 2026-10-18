@@ -472,14 +472,16 @@ def run_pretrain(
 
     if device.type == "cuda":
         torch.set_float32_matmul_precision("high")
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     if is_main_process:
         os.makedirs(output_dir, exist_ok=True)
         hw_name = torch.cuda.get_device_name(dist_info['local_rank'] if torch.cuda.is_available() else 0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
         ddp_note = f" [DDP World Size: {dist_info['world_size']}]" if dist_info["is_distributed"] else ""
         print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}){ddp_note} [Mode: {mode.upper()}] ===")
-        if aihub_dir and os.path.exists(aihub_dir):
-            print(f"[Interleaving] Multilingual Alternation Enabled: Pattern '{interleave_pattern}', AI-Hub dir: '{aihub_dir}'")
+        if aihub_dir:
+            print(f"[Interleaving] Multilingual Alternation Enabled: Pattern '{interleave_pattern}', AI-Hub source: '{aihub_dir}' (or Hub cache)")
 
     tokenizer = get_default_tokenizer()
 
@@ -510,7 +512,14 @@ def run_pretrain(
         elif os.path.exists(resume):
             resume_path = resume
         elif "/" in str(resume):
-            resume_path = str(resume)
+            # If local latest_state.json already exists from an ongoing run on this machine,
+            # prefer the local state over re-downloading the initial Hub checkpoint.
+            if os.path.exists(state_file):
+                if is_main_process:
+                    print(f"[Resume] Local state '{state_file}' found; prioritizing local progress over Hub '{resume}'.")
+                resume_path = state_file
+            else:
+                resume_path = str(resume)
 
     model = None
     if resume_path:
@@ -606,8 +615,13 @@ def run_pretrain(
         if is_main_process:
             print("[Optimization] Activation Gradient Checkpointing Enabled (peak VRAM reduced to ~8-11 GB)")
     if compile_model and device.type == "cuda" and hasattr(torch, "compile"):
+        try:
+            import torch._dynamo
+            torch._dynamo.config.suppress_errors = True
+        except Exception:
+            pass
         if is_main_process:
-            print("[Optimization] Compiling model with torch.compile (Inductor kernel fusion enabled)...")
+            print("[Optimization] Compiling model with torch.compile (Inductor kernel fusion enabled, safe fallback active)...")
         model = torch.compile(model)
     if dist_info["is_distributed"]:
         model = torch.nn.parallel.DistributedDataParallel(

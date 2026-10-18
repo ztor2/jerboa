@@ -27,7 +27,7 @@ warmup_ratio: 0.03
 weight_decay: 0.1
 
 # Fault tolerance & model architecture
-resume: auto
+resume: ztor2/jerboa-base
 enable_mtp: true
 gradient_checkpointing: true
 compile: true

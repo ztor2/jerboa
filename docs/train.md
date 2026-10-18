@@ -78,14 +78,15 @@ python scripts/data/prepare.py --stage all
 
 All training pipelines support **YAML recipes** (`recipes/*.yaml`) so hyperparameters can be maintained in configuration files rather than typed as long CLI flags:
 
-| Shortcut | Pipeline | Default Recipe |
+| Shortcut / Script | Pipeline | Default Recipe |
 | :--- | :--- | :--- |
+| `bash scripts/start_runpod.sh` | Auto-detects RTX 5090 / 4090 (1x or 2x DDP) & CUDA 12.8 | [`recipes/pretrain/runpod_5090.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_5090.yaml) / [`runpod_4090_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_4090_ddp.yaml) |
 | `make pretrain` | Phase 1 Foundation Pre-training (seq_len=2048) | [`recipes/pretrain/phase1_base.yaml`](file:///Users/jc/jerboa/recipes/pretrain/phase1_base.yaml) |
 | `make pretrain-long` | Phase 2 Long-Context Extension (seq_len=8192) | [`recipes/pretrain/phase2_long.yaml`](file:///Users/jc/jerboa/recipes/pretrain/phase2_long.yaml) |
 | `make pretrain-smoke`| Rapid local smoke test & debugging | [`recipes/pretrain/smoke_test.yaml`](file:///Users/jc/jerboa/recipes/pretrain/smoke_test.yaml) |
 | `make pretrain-fast` | High-throughput pre-training (batch=8) | [`recipes/pretrain_fast.yaml`](file:///Users/jc/jerboa/recipes/pretrain_fast.yaml) |
 | `make pretrain-ddp` | Distributed Multi-GPU pre-training (`torchrun`, GPUS=2) | [`recipes/pretrain/runpod_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_ddp.yaml) |
-| `make pretrain-runpod`| RunPod 2x 3090 DDP distributed pre-training | [`recipes/pretrain/runpod_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_ddp.yaml) |
+| `make pretrain-runpod`| RunPod 2x DDP distributed pre-training | [`recipes/pretrain/runpod_ddp.yaml`](file:///Users/jc/jerboa/recipes/pretrain/runpod_ddp.yaml) |
 | `make sft` | Supervised fine-tuning (ChatML) | [`recipes/sft.yaml`](file:///Users/jc/jerboa/recipes/sft.yaml) |
 | `make dpo` | Direct preference optimization | [`recipes/dpo.yaml`](file:///Users/jc/jerboa/recipes/dpo.yaml) |
 | `make grpo` | Group relative policy optimization | [`recipes/grpo.yaml`](file:///Users/jc/jerboa/recipes/grpo.yaml) |
@@ -119,30 +120,23 @@ flowchart LR
 - **In-Memory / File Modes**: `--mode stream` (0 MB disk) or `--text_file <path>`.
 
 ```bash
+# Automated RunPod Launch (Auto-detects 1x/2x RTX 5090 or 4090, checks sm_120 CUDA 12.8, and resumes from Hub/local)
+bash scripts/start_runpod.sh
+
+# Explicit Single RTX 5090 (32GB GDDR7, gradient_checkpointing=false, batch=4, grad_accum=8)
+python pipeline/pretrain.py --recipe recipes/pretrain/runpod_5090.yaml
+
+# Explicit 2x RTX 5090 DDP (64GB aggregate, gradient_checkpointing=false, batch=4, grad_accum=4)
+torchrun --nproc_per_node=2 pipeline/pretrain.py --recipe recipes/pretrain/runpod_5090_ddp.yaml
+
+# Explicit 2x RTX 4090 DDP (48GB aggregate, gradient_checkpointing=true, batch=4, grad_accum=4)
+torchrun --nproc_per_node=2 pipeline/pretrain.py --recipe recipes/pretrain/runpod_4090_ddp.yaml
+
 # Default rolling buffer pre-training (MPS / Single GPU)
 python pipeline/pretrain.py --chunks 5 --docs_per_chunk 500 --steps_per_chunk 15
 
-# Multi-GPU Distributed Training (RunPod / 2x RTX 3090 / 2x RTX 5090)
-make pretrain-ddp GPUS=2
-
-# Custom batch size on dual GPUs
-make pretrain-ddp GPUS=2 RECIPE=recipes/pretrain.yaml BATCH_SIZE=16
-
-# Pre-train with live W&B tracking
-python pipeline/pretrain.py --chunks 5 --wandb --wandb_run "exp-pretrain"
-
 # Resume from latest local checkpoint (same machine)
 python pipeline/pretrain.py --resume auto
-
-# Resume seamlessly in a new environment / fresh pod from Hugging Face Hub (Chunk 668 -> 2500)
-torchrun --nproc_per_node=2 pipeline/pretrain.py \
-    --recipe recipes/pretrain/runpod_4090_ddp.yaml \
-    --resume ztor2/jerboa-base
-
-# Single GPU or local Mac resumption from Hub
-python pipeline/pretrain.py \
-    --recipe recipes/pretrain/runpod_4090_ddp.yaml \
-    --resume ztor2/jerboa-base
 
 # View training lineage ledger & loss curves locally
 python scripts/tools/history.py
