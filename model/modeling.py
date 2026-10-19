@@ -98,7 +98,10 @@ class JerboaRotaryEmbedding(nn.Module):
             or self.inv_freq is None
             or self.inv_freq.device.type == "meta"
             or not torch.isfinite(self.inv_freq).all()
-            or (self.inv_freq.numel() > 0 and self.inv_freq.max().item() > 2.0)
+            or (
+                self.inv_freq.numel() > 0
+                and (self.inv_freq.max().item() > 2.0 or self.inv_freq.min().item() <= 0.0)
+            )
         ):
             inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2, device=device).float() / self.dim))
             self.inv_freq = inv_freq
