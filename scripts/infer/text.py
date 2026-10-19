@@ -27,7 +27,7 @@ def load_model_and_tokenizer(model_path: str, device: torch.device):
     if os.path.exists(local_tok):
         try:
             from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(local_tok)
+            tokenizer = AutoTokenizer.from_pretrained(local_tok, clean_up_tokenization_spaces=False)
         except Exception:
             pass
 
@@ -36,6 +36,7 @@ def load_model_and_tokenizer(model_path: str, device: torch.device):
             tokenizer = get_default_tokenizer(model_path)
         except Exception:
             tokenizer = get_default_tokenizer()
+    tokenizer.clean_up_tokenization_spaces = False
 
     model = JerboaForCausalLM.from_pretrained(model_path, trust_remote_code=True)
     model.to(device)
@@ -69,7 +70,11 @@ def generate_single_prompt(
 
     input_ids = tokenizer.encode(formatted_prompt, return_tensors="pt").to(device)
     attention_mask = torch.ones_like(input_ids)
-    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True) if stream else None
+    streamer = (
+        TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+        if stream
+        else None
+    )
 
     with torch.no_grad():
         output_ids = model.generate(
@@ -86,7 +91,11 @@ def generate_single_prompt(
         )
 
     if not stream:
-        resp = tokenizer.decode(output_ids[0, input_ids.shape[1] :], skip_special_tokens=True)
+        resp = tokenizer.decode(
+            output_ids[0, input_ids.shape[1] :],
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
         print(resp)
     print()
     print()
@@ -106,7 +115,7 @@ def interactive_chat_repl(
     print("=" * 70)
 
     conversation_history = f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    streamer = TextStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True, clean_up_tokenization_spaces=False)
 
     while True:
         try:
@@ -135,7 +144,11 @@ def interactive_chat_repl(
                     streamer=streamer,
                 )
 
-            assistant_reply = tokenizer.decode(output_ids[0, input_ids.shape[1] :], skip_special_tokens=True)
+            assistant_reply = tokenizer.decode(
+                output_ids[0, input_ids.shape[1] :],
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
             conversation_history += f"{assistant_reply}<|im_end|>\n"
 
         except KeyboardInterrupt:
@@ -145,8 +158,8 @@ def interactive_chat_repl(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Inference CLI")
-    default_model = "ztor2/jerboa-pretrain-checkpoints"
-    parser.add_argument("--model", type=str, default=default_model, help="Path to local checkpoint or HF Hub repo id (default: ztor2/jerboa-pretrain-checkpoints)")
+    default_model = "ztor2/jerboa-base"
+    parser.add_argument("--model", type=str, default=default_model, help="Path to local checkpoint or HF Hub repo id (default: ztor2/jerboa-base)")
     parser.add_argument("--prompt", type=str, default=None, help="Input prompt text")
     parser.add_argument("--chat", action="store_true", help="Launch interactive multi-turn chat session with ChatML format")
     parser.add_argument("--instruct", action="store_true", help="Format prompt as instruction (ChatML)")

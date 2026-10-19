@@ -90,6 +90,7 @@ def build_bpe_tokenizer(
         pad_token="<|pad|>",
         unk_token="<|unk|>",
         additional_special_tokens=["<|image|>", "<|audio|>", "<|endoftext|>"],
+        clean_up_tokenization_spaces=False,
     )
     fast_tokenizer.chat_template = DEFAULT_CHAT_TEMPLATE
     fast_tokenizer.save_pretrained(save_directory)
@@ -110,11 +111,20 @@ def get_default_tokenizer(
             tokenizer_name_or_path = "HuggingFaceTB/SmolLM-135M"
 
     try:
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer_name_or_path,
+            trust_remote_code=trust_remote_code,
+            clean_up_tokenization_spaces=False,
+        )
     except Exception:
         # Fallback to local if exists or gpt2
         fallback = "gpt2"
-        tokenizer = AutoTokenizer.from_pretrained(fallback, trust_remote_code=trust_remote_code)
+        tokenizer = AutoTokenizer.from_pretrained(
+            fallback,
+            trust_remote_code=trust_remote_code,
+            clean_up_tokenization_spaces=False,
+        )
+    tokenizer.clean_up_tokenization_spaces = False
 
     # Ensure special tokens exist
     special_tokens_dict = {}
