@@ -153,4 +153,11 @@ Because raw AI-Hub Korean corpora contain aggressive PII anonymization placehold
   ```bash
   bash scripts/start_runpod.sh
   ```
+- **Completion & Verification**:
+  - **Total Tokens Ingested**: `3,943,716,696` tokens across 3,000 chunks (96,890 global optimizer steps).
+  - **Final Loss & LR**: Average chunk loss `1.2173`, minimum LR floor `4.0e-05`.
+  - **Artifact Resolution**: PII masking artifacts (`#이름#`) completely unlearned and eliminated; factual entity completion (`세종대왕`, `드롭아웃`, `가중치 감쇠`) restored.
+  - **Zero-Shot MCQ Benchmark**: **73.3%** overall accuracy across English commonsense (60.0%), Korean knowledge (60.0%), and Python code completion (100.0%, PPL 2.20).
+  - **Hub Artifact**: Synced and versioned at [`ztor2/jerboa-base`](https://huggingface.co/ztor2/jerboa-base) commit `57507efb08`.
+
 
