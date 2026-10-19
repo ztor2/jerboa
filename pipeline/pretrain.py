@@ -17,6 +17,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -43,6 +44,7 @@ try:
     from datasets import load_dataset
 except ImportError:
     load_dataset = None
+from torch.optim.lr_scheduler import LambdaLR
 from torch.utils.data import DataLoader, Dataset, IterableDataset
 from torch.utils.data.distributed import DistributedSampler
 import torch.distributed as dist
@@ -53,7 +55,7 @@ from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
 from pipeline.checkpoint_manager import GracefulInterruptHandler, SleepGuard, SystemResourceGuard, get_device
-from pipeline.dataset import AIHubDataset, get_aihub_chunk, get_chunk_source
+from pipeline.dataset import AIHubDataset, get_aihub_chunk, get_chunk_source, get_kowiki_chunk
 
 MANIFEST_DIR = "data/manifests"
 LINEAGE_LOG = os.path.join(MANIFEST_DIR, "dataset_lineage.jsonl")
@@ -205,6 +207,7 @@ def create_optimizer_and_scheduler(
     weight_decay: float,
     total_steps: int,
     warmup_steps: int,
+    min_lr: Optional[float] = None,
 ):
     decay_params = [p for p in model.parameters() if p.requires_grad and p.dim() >= 2]
     no_decay_params = [p for p in model.parameters() if p.requires_grad and p.dim() < 2]
@@ -219,11 +222,19 @@ def create_optimizer_and_scheduler(
         eps=1e-8,
     )
 
-    scheduler = get_cosine_schedule_with_warmup(
-        optimizer=optimizer,
-        num_warmup_steps=warmup_steps,
-        num_training_steps=total_steps,
-    )
+    effective_min_lr = min_lr if min_lr is not None else (learning_rate * 0.1)
+    min_lr_ratio = min(max(effective_min_lr / max(learning_rate, 1e-8), 0.0), 1.0)
+
+    def lr_lambda(current_step: int) -> float:
+        if current_step < warmup_steps:
+            return float(current_step) / float(max(1, warmup_steps))
+        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        if progress >= 1.0:
+            return min_lr_ratio
+        cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
+        return min_lr_ratio + (1.0 - min_lr_ratio) * cosine_decay
+
+    scheduler = LambdaLR(optimizer, lr_lambda)
     return optimizer, scheduler
 
 
@@ -467,6 +478,7 @@ def run_pretrain(
     grad_accum_steps: int = 2,
     seq_len: int = 256,
     lr: float = 5e-4,
+    min_lr: Optional[float] = None,
     output_dir: str = "checkpoints/pretrain",
     text_file: Optional[str] = None,
     resume: Optional[str] = None,
@@ -502,8 +514,8 @@ def run_pretrain(
         hw_name = torch.cuda.get_device_name(dist_info['local_rank'] if torch.cuda.is_available() else 0) if device.type == "cuda" else ("Apple Silicon Metal" if device.type == "mps" else "CPU")
         ddp_note = f" [DDP World Size: {dist_info['world_size']}]" if dist_info["is_distributed"] else ""
         print(f"=== JerboaLM Unified Pre-training on {device} ({hw_name}){ddp_note} [Mode: {mode.upper()}] ===")
-        if aihub_dir:
-            print(f"[Interleaving] Multilingual Alternation Enabled: Pattern '{interleave_pattern}', AI-Hub source: '{aihub_dir}' (or Hub cache)")
+        if aihub_dir or "kowiki" in interleave_pattern:
+            print(f"[Interleaving] Multilingual Alternation Enabled: Pattern '{interleave_pattern}'")
 
     tokenizer = get_default_tokenizer()
 
@@ -520,7 +532,7 @@ def run_pretrain(
     # 1. Checkpoint resumption or model initialization
     start_chunk = 1
     stream_cursor = 0
-    cursors = {"fineweb": 0, "aihub": 0, "code": 0}
+    cursors = {"fineweb": 0, "aihub": 0, "kowiki": 0, "code": 0}
     cumulative_tokens = 0
     global_step = 0
 
@@ -558,7 +570,8 @@ def run_pretrain(
                 resume_dir = os.path.join(output_dir, "model")
             start_chunk = st.get("next_chunk_idx", 1)
             stream_cursor = st.get("stream_cursor", 0)
-            cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
+            cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "kowiki": 0, "code": 0})
+            cursors.setdefault("kowiki", 0)
             cumulative_tokens = st.get("cumulative_tokens", 0)
             global_step = st.get("global_step", 0)
             if is_main_process:
@@ -574,7 +587,8 @@ def run_pretrain(
                     st = json.load(f)
                 start_chunk = st.get("next_chunk_idx", 1)
                 stream_cursor = st.get("stream_cursor", 0)
-                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
+                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "kowiki": 0, "code": 0})
+                cursors.setdefault("kowiki", 0)
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
         else:
@@ -595,7 +609,8 @@ def run_pretrain(
                     st = json.load(f)
                 start_chunk = st.get("next_chunk_idx", 1)
                 stream_cursor = st.get("stream_cursor", 0)
-                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "code": 0})
+                cursors = st.get("cursors", {"fineweb": stream_cursor, "aihub": 0, "kowiki": 0, "code": 0})
+                cursors.setdefault("kowiki", 0)
                 cumulative_tokens = st.get("cumulative_tokens", 0)
                 global_step = st.get("global_step", 0)
                 if is_main_process:
@@ -687,7 +702,11 @@ def run_pretrain(
         est_steps_per_chunk = max(int((docs_per_chunk * 1500) / tokens_per_step), 1)
         end_chunk = total_chunks + 1 if start_chunk <= total_chunks else start_chunk + total_chunks
         target_total_chunks = end_chunk - 1
-        planned_total_steps = max(target_total_chunks * est_steps_per_chunk, global_step + est_steps_per_chunk)
+        remaining_chunks = max(target_total_chunks - start_chunk + 1, 1)
+        planned_total_steps = max(
+            target_total_chunks * est_steps_per_chunk,
+            global_step + remaining_chunks * est_steps_per_chunk,
+        )
 
         optimizer, scheduler = create_optimizer_and_scheduler(
             model=model,
@@ -695,6 +714,7 @@ def run_pretrain(
             weight_decay=0.05,
             total_steps=planned_total_steps,
             warmup_steps=min(100, max(10, planned_total_steps // 20)),
+            min_lr=min_lr,
         )
 
         # Restore optimizer/scheduler state if available
@@ -711,13 +731,18 @@ def run_pretrain(
                     optimizer.load_state_dict(st_pt["optimizer_state"])
                 if "scheduler_state" in st_pt:
                     scheduler.load_state_dict(st_pt["scheduler_state"])
-                    # Ensure Cosine decay horizon matches updated target_total_chunks
-                    if global_step > 0 and scheduler.last_epoch != global_step:
+                    scheduler.base_lrs = [lr for _ in optimizer.param_groups]
+                    if global_step > 0:
                         scheduler.last_epoch = global_step
+                    new_lrs = scheduler.get_lr()
+                    for pg, new_lr in zip(optimizer.param_groups, new_lrs):
+                        pg["lr"] = new_lr
+                    scheduler._last_lr = new_lrs
                 if is_main_process:
+                    cur_lr = scheduler.get_last_lr()[0]
                     print(
                         f"[Resume] Restored optimizer & cosine scheduler state from '{state_pt_file}' "
-                        f"(Step {global_step:,} / Target {planned_total_steps:,} steps across {target_total_chunks} chunks)"
+                        f"(Step {global_step:,} / Target {planned_total_steps:,} steps across {target_total_chunks} chunks, current LR={cur_lr:.2e})"
                     )
             except Exception as e:
                 if is_main_process:
@@ -756,6 +781,26 @@ def run_pretrain(
                             chunk_meta = json.load(f)
                 else:
                     chunk_meta = download_code_chunk_with_cursor(
+                        output_path=temp_chunk_path,
+                        skip_docs=current_offset,
+                        target_docs=docs_per_chunk,
+                    )
+            elif chunk_source == "kowiki":
+                if dist_info["is_distributed"]:
+                    if is_main_process:
+                        chunk_meta = get_kowiki_chunk(
+                            output_path=temp_chunk_path,
+                            skip_docs=current_offset,
+                            target_docs=docs_per_chunk,
+                        )
+                        with open(temp_chunk_path + ".meta.json", "w", encoding="utf-8") as f:
+                            json.dump(chunk_meta, f)
+                    dist.barrier()
+                    if not is_main_process:
+                        with open(temp_chunk_path + ".meta.json", "r", encoding="utf-8") as f:
+                            chunk_meta = json.load(f)
+                else:
+                    chunk_meta = get_kowiki_chunk(
                         output_path=temp_chunk_path,
                         skip_docs=current_offset,
                         target_docs=docs_per_chunk,
@@ -1287,6 +1332,7 @@ if __name__ == "__main__":
     parser.add_argument("--grad_accum", type=int, default=2)
     parser.add_argument("--seq_len", type=int, default=256)
     parser.add_argument("--lr", type=float, default=5e-4)
+    parser.add_argument("--min_lr", type=float, default=None, help="Minimum learning rate floor for cosine schedule")
     default_text = "data/pretrain/fineweb_edu_sample.txt" if os.path.exists("data/pretrain/fineweb_edu_sample.txt") else None
     parser.add_argument("--text_file", type=str, default=default_text, help="Path to local text file (triggers file mode)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/pretrain", help="Directory to save checkpoints")
@@ -1320,6 +1366,7 @@ if __name__ == "__main__":
         grad_accum_steps=args.grad_accum,
         seq_len=args.seq_len,
         lr=args.lr,
+        min_lr=getattr(args, "min_lr", None),
         output_dir=args.output_dir,
         text_file=args.text_file,
         resume=args.resume,

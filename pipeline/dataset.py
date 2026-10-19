@@ -394,3 +394,148 @@ def get_chunk_source(chunk_idx: int, pattern: str = "fineweb,aihub") -> str:
     if not items:
         return "fineweb"
     return items[(chunk_idx - 1) % len(items)]
+
+
+KOWIKI_PARQUET_SHARDS = [
+    "20231101.ko/train-00000-of-00003.parquet",
+    "20231101.ko/train-00001-of-00003.parquet",
+    "20231101.ko/train-00002-of-00003.parquet",
+]
+
+
+def ensure_kowiki_cached(
+    cache_dir: str = "data/cache/kowiki",
+    min_chars: int = 150,
+    repo_id: str = "wikimedia/wikipedia",
+) -> tuple[str, int]:
+    """Download Korean Wikipedia Parquet shards once, filter stubs, shuffle, and cache as flat JSONL on NVMe."""
+    import random
+    import pyarrow.parquet as pq
+    from huggingface_hub import hf_hub_download
+
+    abs_cache_dir = os.path.abspath(cache_dir)
+    os.makedirs(abs_cache_dir, exist_ok=True)
+    jsonl_path = os.path.join(abs_cache_dir, "kowiki_cached.jsonl")
+    meta_path = os.path.join(abs_cache_dir, "kowiki_cached.meta.json")
+
+    if os.path.exists(jsonl_path) and os.path.exists(meta_path):
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            cached_docs = int(meta.get("total_docs", 0))
+            if cached_docs >= 10000:
+                return jsonl_path, cached_docs
+        except Exception:
+            pass
+
+    print(f"[KoWiki Cache] Downloading & indexing '{repo_id}' (20231101.ko) into local NVMe...")
+    all_docs: List[str] = []
+    for shard_file in KOWIKI_PARQUET_SHARDS:
+        print(f"[KoWiki Cache] Fetching shard {shard_file}...")
+        shard_path = hf_hub_download(
+            repo_id=repo_id,
+            repo_type="dataset",
+            filename=shard_file,
+            local_dir=abs_cache_dir,
+        )
+        pf = pq.ParquetFile(shard_path)
+        table = pf.read(columns=["title", "text"])
+        titles = table["title"].to_pylist()
+        texts = table["text"].to_pylist()
+        for title, text in zip(titles, texts):
+            t_clean = (text or "").strip()
+            if len(t_clean) < min_chars:
+                continue
+            title_clean = (title or "").strip()
+            doc = f"{title_clean}\n\n{t_clean}" if title_clean else t_clean
+            all_docs.append(doc)
+        try:
+            os.remove(shard_path)
+        except OSError:
+            pass
+
+    rng = random.Random(42)
+    rng.shuffle(all_docs)
+
+    total_docs = len(all_docs)
+    with open(jsonl_path, "w", encoding="utf-8") as fout:
+        for doc in all_docs:
+            fout.write(json.dumps({"text": doc}, ensure_ascii=False) + "\n")
+
+    with open(meta_path, "w", encoding="utf-8") as fmeta:
+        json.dump(
+            {"repo_id": repo_id, "subset": "20231101.ko", "min_chars": min_chars, "total_docs": total_docs},
+            fmeta,
+            indent=2,
+        )
+
+    print(f"[KoWiki Cache] Ready: {total_docs:,} encyclopedic Korean Wikipedia articles cached at '{jsonl_path}'.")
+    return jsonl_path, max(total_docs, 1)
+
+
+def get_kowiki_chunk(
+    output_path: str,
+    skip_docs: int = 0,
+    target_docs: int = 1500,
+    min_chars: int = 150,
+    cache_dir: str = "data/cache/kowiki",
+) -> Dict[str, Any]:
+    """Collect a batch of clean Korean Wikipedia articles with wrap-around cursor."""
+    import time
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    jsonl_path, total_kowiki_docs = ensure_kowiki_cached(cache_dir=cache_dir, min_chars=min_chars)
+    norm_skip = skip_docs % max(total_kowiki_docs, 1)
+
+    collected_docs = 0
+    total_tokens = 0
+    start_time = time.time()
+
+    with open(output_path, "w", encoding="utf-8") as out_fp:
+        with open(jsonl_path, "r", encoding="utf-8") as in_fp:
+            while collected_docs < target_docs:
+                in_fp.seek(0)
+                progressed = False
+                for line_idx, line in enumerate(in_fp):
+                    if norm_skip > 0 and line_idx < norm_skip:
+                        continue
+                    if collected_docs >= target_docs:
+                        break
+                    try:
+                        data = json.loads(line)
+                        doc = data.get("text", "").strip()
+                    except Exception:
+                        continue
+                    if len(doc) >= min_chars:
+                        out_fp.write(doc + "\n<|endoftext|>\n\n")
+                        total_tokens += int(len(doc.split()) * 1.4)
+                        collected_docs += 1
+                        progressed = True
+                norm_skip = 0
+                if not progressed:
+                    break
+
+    duration = time.time() - start_time
+    file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
+
+    hasher = hashlib.sha256()
+    with open(output_path, "rb") as f:
+        while chunk := f.read(1024 * 1024):
+            hasher.update(chunk)
+    sha256_hash = hasher.hexdigest()
+
+    print(
+        f"[KoWiki Stream] Cached extraction: {collected_docs:,} Korean Wiki docs ({total_tokens:,} tokens, "
+        f"{file_size_mb:.1f} MB) in {duration:.2f}s"
+    )
+
+    return {
+        "source": "kowiki",
+        "start_offset": skip_docs,
+        "end_offset": skip_docs + target_docs,
+        "document_count": collected_docs,
+        "approx_tokens": total_tokens,
+        "file_size_mb": round(file_size_mb, 2),
+        "sha256": sha256_hash,
+    }
+

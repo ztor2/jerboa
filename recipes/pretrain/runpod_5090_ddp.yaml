@@ -7,12 +7,12 @@ source: HuggingFaceFW/fineweb-edu
 subset: sample-10BT
 min_score: 3
 
-# Multilingual Interleaving (Blocked schedule: 50% English Edu, 33% Korean AI-Hub, 17% Python Code)
+# Multilingual Interleaving (Korean Wiki Annealing: 60% Korean Wiki, 20% English Edu, 20% Python Code)
 aihub_dir: data/raw/aihub_test
-interleave_pattern: fineweb,fineweb,aihub,aihub,fineweb,code
+interleave_pattern: kowiki,kowiki,kowiki,fineweb,code
 
-# Compute budget: 2,500 chunks x 1,500 docs (approx 4.5B - 5.0B tokens, Chinchilla 20N Optimal)
-chunks: 2500
+# Compute budget: 3,000 chunks total (2,500 base + 500 Korean Wikipedia annealing chunks)
+chunks: 3000
 docs_per_chunk: 1500
 
 # RunPod 2x 5090 DDP Hyperparameters:

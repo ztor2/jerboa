@@ -17,6 +17,11 @@ echo "          JerboaLM Pre-training Automated Launcher"
 echo "======================================================================"
 
 # 1. Environment & Path Setup
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+fi
 export PYTHONPATH="$PROJECT_ROOT:$PYTHONPATH"
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM=false
@@ -70,6 +75,18 @@ GPU_NAME=$(python3 -c "import torch; print(torch.cuda.get_device_name(0))")
 GPU_VRAM_GB=$(python3 -c "import torch; print(torch.cuda.get_device_properties(0).total_memory // (1024**3))")
 echo "[✓] GPU Detected: $NUM_GPUS x $GPU_NAME (${GPU_VRAM_GB}GB VRAM per GPU)"
 
+# Start background Hugging Face Hub backup daemon if HF_TOKEN is configured
+BACKUP_PID=""
+if [ -n "$HF_TOKEN" ]; then
+    if ! pgrep -f "hub_backup_daemon.py" >/dev/null 2>&1; then
+        echo "[✓] Starting background HF Hub backup daemon (ztor2/jerboa-base, every 50 chunks)..."
+        nohup python3 scripts/tools/hub_backup_daemon.py --repo_id ztor2/jerboa-base --interval_chunks 50 --public > hub_backup.log 2>&1 &
+        BACKUP_PID=$!
+    else
+        echo "[✓] Background HF Hub backup daemon is already running."
+    fi
+fi
+
 # 5. Launch Training Pipeline (Auto-select 5090 vs 4090 recipe)
 echo "[4/4] Launching Training Pipeline..."
 if [[ "$GPU_NAME" == *"5090"* ]] || [ "$GPU_VRAM_GB" -ge 30 ]; then
@@ -96,12 +113,22 @@ if [ "$NUM_GPUS" -ge 2 ]; then
     echo " Recipe:   $RECIPE"
     echo " Target:   $TARGET_SPEED"
     echo "======================================================================"
-    exec python3 -m torch.distributed.run --nproc_per_node="$NUM_GPUS" pipeline/pretrain.py --recipe "$RECIPE" "$@"
+    python3 -m torch.distributed.run --nproc_per_node="$NUM_GPUS" pipeline/pretrain.py --recipe "$RECIPE" "$@"
 else
     echo "======================================================================"
     echo " Mode:     Single GPU ($GPU_NAME)"
     echo " Recipe:   $RECIPE"
     echo " Target:   $TARGET_SPEED"
     echo "======================================================================"
-    exec python3 pipeline/pretrain.py --recipe "$RECIPE" "$@"
+    python3 pipeline/pretrain.py --recipe "$RECIPE" "$@"
 fi
+
+# Final checkpoint upload sync
+if [ -n "$HF_TOKEN" ]; then
+    echo "[✓] Running final checkpoint backup to Hugging Face Hub (ztor2/jerboa-base)..."
+    python3 scripts/tools/hub_backup_daemon.py --repo_id ztor2/jerboa-base --interval_chunks 1 --once --public || true
+fi
+if [ -n "$BACKUP_PID" ]; then
+    kill "$BACKUP_PID" 2>/dev/null || true
+fi
+

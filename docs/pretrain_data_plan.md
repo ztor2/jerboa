@@ -142,3 +142,15 @@ python pipeline/pretrain.py \
 - **Validation Loss Target**: Loss should steadily descend from $\sim 10.5 \rightarrow 3.2 - 2.8$.
 - **Perplexity ($e^{\text{loss}}$)**: Target perplexity $< 18.0$ on educational validation subsets.
 - **Throughput Stability**: Maintain $8,000 - 18,000$ tokens/sec on Apple Silicon M-series.
+
+### Milestone 2: Korean Wikipedia Annealing & Entity De-Masking (`Chunks 2501–3000`)
+
+Because raw AI-Hub Korean corpora contain aggressive PII anonymization placeholders (`#이름#`, `#주소#`, `#소속#`) even in historical and biographical contexts, completing the initial 2,500 chunks (`~3.46B` tokens) is followed by a 500-chunk **Korean Wikipedia Annealing Phase** (`chunks: 3000`):
+
+- **Source (`kowiki`)**: `wikimedia/wikipedia` (`20231101.ko`), filtered for encyclopedic articles ($\ge 150$ characters, $\sim 430\text{k}$ articles) with zero `#이름#` masks.
+- **Interleaving Pattern**: `kowiki,kowiki,kowiki,fineweb,code` (**60% Korean Wikipedia [300 chunks = 450,000 articles]**, **20% English FineWeb-Edu [100 chunks]**, **20% Python CodeParrot [100 chunks]**).
+- **Execution**:
+  ```bash
+  bash scripts/start_runpod.sh
+  ```
+

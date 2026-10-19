@@ -13,6 +13,13 @@ import shutil
 import sys
 import time
 from typing import Optional, Set
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from huggingface_hub import HfApi, whoami
 
 
@@ -24,6 +31,15 @@ def inject_remote_code_and_automap(ckpt_dir: str, project_root: str):
         if os.path.exists(src):
             dst = os.path.join(ckpt_dir, filename)
             shutil.copy2(src, dst)
+
+    manifests_src = os.path.join(project_root, "data", "manifests")
+    if os.path.isdir(manifests_src):
+        manifests_dst = os.path.join(ckpt_dir, "manifests")
+        os.makedirs(manifests_dst, exist_ok=True)
+        for fname in ["dataset_lineage.jsonl", "training_metrics.jsonl"]:
+            m_src = os.path.join(manifests_src, fname)
+            if os.path.exists(m_src):
+                shutil.copy2(m_src, os.path.join(manifests_dst, fname))
 
     config_path = os.path.join(ckpt_dir, "config.json")
     if os.path.exists(config_path):
@@ -51,36 +67,35 @@ def get_chunk_number(folder_name: str) -> Optional[int]:
 
 def run_backup_daemon(
     steps_dir: str = "checkpoints/pretrain/steps",
-    repo_id: str = "ztor2/jerboa-pretrain-checkpoints",
-    interval_chunks: int = 15,
+    repo_id: str = "ztor2/jerboa-base",
+    interval_chunks: int = 50,
     poll_sec: int = 30,
-    private: bool = True,
+    private: bool = False,
+    once: bool = False,
 ):
     print("==================================================")
     print("  JERBOA HF HUB CHECKPOINT BACKUP DAEMON")
     print("==================================================")
-    print(f"📁 Source Directory: {steps_dir}")
-    print(f"📦 Target Repository: {repo_id} (private={private})")
-    print(f"⏱️ Backup Interval: Every {interval_chunks} chunks (~15-20 min)")
-    print(f"🔍 Polling Frequency: Every {poll_sec}s")
+    print(f"Source Directory: {steps_dir}")
+    print(f"Target Repository: {repo_id} (private={private})")
+    print(f"Backup Interval: Every {interval_chunks} chunks (once={once})")
     print("==================================================")
 
-    # 1. Verify Hugging Face Authentication
+    token = os.getenv("HF_TOKEN")
     try:
-        user_info = whoami()
+        user_info = whoami(token=token)
         username = user_info["name"]
-        print(f"🔑 Authenticated as HF user: '{username}'")
+        print(f"Authenticated as HF user: '{username}'")
     except Exception as e:
-        print(f"❌ Error: Not authenticated with Hugging Face Hub: {e}")
-        print("💡 Run `hf auth login` before starting the daemon.")
+        print(f"Error: Not authenticated with Hugging Face Hub: {e}")
         sys.exit(1)
 
-    api = HfApi()
+    api = HfApi(token=token)
     try:
         api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
-        print(f"✅ Verified repository: https://huggingface.co/{repo_id}")
+        print(f"Verified repository: https://huggingface.co/{repo_id}")
     except Exception as e:
-        print(f"⚠️ Notice on repo check: {e}")
+        print(f"Notice on repo check: {e}")
 
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     staging_dir = os.path.join(os.path.dirname(steps_dir), ".backup_staging")
@@ -100,12 +115,13 @@ def run_backup_daemon(
         if c_num and c_num > last_uploaded_idx:
             last_uploaded_idx = c_num
 
-    print(f"ℹ️ Previously backed up: {len(uploaded_chunks)} checkpoints (highest: chunk_{last_uploaded_idx:04d})")
-    print("🚀 Monitoring for new checkpoints...\n")
+    print(f"Previously backed up: {len(uploaded_chunks)} checkpoints (highest: chunk_{last_uploaded_idx:04d})")
 
     try:
         while True:
             if not os.path.exists(steps_dir):
+                if once:
+                    break
                 time.sleep(poll_sec)
                 continue
 
@@ -115,13 +131,11 @@ def run_backup_daemon(
             ])
 
             target_to_upload: Optional[str] = None
-            is_emergency = False
 
             # Check for emergency interrupt checkpoint first
             for cand in candidates:
                 if cand.startswith("interrupted_") and cand not in uploaded_chunks:
                     target_to_upload = cand
-                    is_emergency = True
                     break
 
             # If no emergency, check for scheduled interval chunk
@@ -131,8 +145,7 @@ def run_backup_daemon(
                         continue
                     c_num = get_chunk_number(cand)
                     if c_num is not None:
-                        # Upload if interval is reached or first checkpoint after daemon startup
-                        if c_num % interval_chunks == 0 or (c_num - last_uploaded_idx >= interval_chunks):
+                        if once or c_num % interval_chunks == 0 or (c_num - last_uploaded_idx >= interval_chunks):
                             target_to_upload = cand
                             break
 
@@ -142,11 +155,11 @@ def run_backup_daemon(
                 meta_file = os.path.join(full_path, "training_state.json")
 
                 if not (os.path.exists(pt_file) and os.path.exists(meta_file)):
-                    print(f"⏳ Waiting for checkpoint files in '{target_to_upload}' to finish writing...")
+                    if once:
+                        break
                     time.sleep(10)
                     continue
 
-                # Read metrics if available
                 commit_msg = f"Backup {target_to_upload}"
                 try:
                     with open(meta_file, "r", encoding="utf-8") as f:
@@ -157,8 +170,7 @@ def run_backup_daemon(
                 except Exception:
                     pass
 
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 📦 Staging '{target_to_upload}' via instant hardlinks...")
-                # Stage files using instant hardlinks to protect from background pruning
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Staging '{target_to_upload}'...")
                 if os.path.exists(staging_dir):
                     shutil.rmtree(staging_dir, ignore_errors=True)
                 os.makedirs(staging_dir, exist_ok=True)
@@ -173,7 +185,7 @@ def run_backup_daemon(
 
                 inject_remote_code_and_automap(staging_dir, project_root)
 
-                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 📤 Uploading '{target_to_upload}' to '{repo_id}'...")
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Uploading '{target_to_upload}' to '{repo_id}'...")
                 upload_start = time.time()
                 try:
                     api.upload_folder(
@@ -183,8 +195,7 @@ def run_backup_daemon(
                         commit_message=commit_msg,
                     )
                     upload_duration = time.time() - upload_start
-                    print(f"🎉 Successfully uploaded '{target_to_upload}' in {upload_duration:.1f}s!")
-                    print(f"🔗 Repository: https://huggingface.co/{repo_id}\n")
+                    print(f"Successfully uploaded '{target_to_upload}' in {upload_duration:.1f}s!")
 
                     uploaded_chunks.add(target_to_upload)
                     c_num = get_chunk_number(target_to_upload)
@@ -195,10 +206,12 @@ def run_backup_daemon(
                         json.dump(list(uploaded_chunks), f, indent=2)
 
                 except Exception as e:
-                    print(f"⚠️ Upload failed for '{target_to_upload}': {e}. Will retry in next cycle.")
+                    print(f"Upload failed for '{target_to_upload}': {e}. Will retry in next cycle.")
                 finally:
                     shutil.rmtree(staging_dir, ignore_errors=True)
 
+            if once:
+                break
             time.sleep(poll_sec)
 
     except KeyboardInterrupt:
@@ -208,10 +221,12 @@ def run_backup_daemon(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Jerboa Pretrain Checkpoint HF Hub Backup Daemon")
     parser.add_argument("--steps_dir", type=str, default="checkpoints/pretrain/steps", help="Path to checkpoint steps directory")
-    parser.add_argument("--repo_id", type=str, default="ztor2/jerboa-pretrain-checkpoints", help="Hugging Face Hub repository ID")
-    parser.add_argument("--interval_chunks", type=int, default=15, help="Upload every N chunks (default: 15 chunks, ~15-20 min)")
+    parser.add_argument("--repo_id", type=str, default="ztor2/jerboa-base", help="Hugging Face Hub repository ID")
+    parser.add_argument("--interval_chunks", type=int, default=50, help="Upload every N chunks (default: 50 chunks)")
     parser.add_argument("--poll_sec", type=int, default=30, help="Directory polling interval in seconds")
-    parser.add_argument("--public", action="store_true", help="Set repository to public (default: private)")
+    parser.add_argument("--public", action="store_true", default=True, help="Set repository to public")
+    parser.add_argument("--private", action="store_false", dest="public", help="Set repository to private")
+    parser.add_argument("--once", action="store_true", help="Run a single backup check and exit")
     args = parser.parse_args()
 
     run_backup_daemon(
@@ -220,4 +235,5 @@ if __name__ == "__main__":
         interval_chunks=args.interval_chunks,
         poll_sec=args.poll_sec,
         private=not args.public,
+        once=args.once,
     )
