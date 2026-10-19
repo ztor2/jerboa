@@ -75,9 +75,19 @@ GPU_NAME=$(python3 -c "import torch; print(torch.cuda.get_device_name(0))")
 GPU_VRAM_GB=$(python3 -c "import torch; print(torch.cuda.get_device_properties(0).total_memory // (1024**3))")
 echo "[✓] GPU Detected: $NUM_GPUS x $GPU_NAME (${GPU_VRAM_GB}GB VRAM per GPU)"
 
-# Start background Hugging Face Hub backup daemon if HF_TOKEN is configured
+# Start background Hugging Face Hub backup daemon if authenticated (.env HF_TOKEN or hf auth login)
 BACKUP_PID=""
-if [ -n "$HF_TOKEN" ]; then
+HF_USER=$(python3 -c "
+import os
+from huggingface_hub import whoami
+try:
+    print(whoami(token=os.getenv('HF_TOKEN'))['name'])
+except Exception:
+    print('')
+" 2>/dev/null)
+
+if [ -n "$HF_USER" ]; then
+    echo "[✓] Hugging Face Authenticated as: $HF_USER"
     if ! pgrep -f "hub_backup_daemon.py" >/dev/null 2>&1; then
         echo "[✓] Starting background HF Hub backup daemon (ztor2/jerboa-base, every 50 chunks)..."
         nohup python3 scripts/tools/hub_backup_daemon.py --repo_id ztor2/jerboa-base --interval_chunks 50 --public > hub_backup.log 2>&1 &
@@ -85,6 +95,8 @@ if [ -n "$HF_TOKEN" ]; then
     else
         echo "[✓] Background HF Hub backup daemon is already running."
     fi
+else
+    echo "[!] WARNING: Hugging Face token not detected (.env HF_TOKEN or 'hf auth login'). Automatic Hub backup is disabled!"
 fi
 
 # 5. Launch Training Pipeline (Auto-select 5090 vs 4090 recipe)
@@ -124,7 +136,7 @@ else
 fi
 
 # Final checkpoint upload sync
-if [ -n "$HF_TOKEN" ]; then
+if [ -n "$HF_USER" ]; then
     echo "[✓] Running final checkpoint backup to Hugging Face Hub (ztor2/jerboa-base)..."
     python3 scripts/tools/hub_backup_daemon.py --repo_id ztor2/jerboa-base --interval_chunks 1 --once --public || true
 fi
