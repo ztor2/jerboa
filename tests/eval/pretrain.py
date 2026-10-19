@@ -410,7 +410,7 @@ def main():
     print("=" * 78)
 
     tokenizer = get_default_tokenizer()
-    model = JerboaForCausalLM.from_pretrained(args.model, dtype=torch.float32).to(device)
+    model = JerboaForCausalLM.from_pretrained(args.model, torch_dtype=torch.float32).to(device)
     model.eval()
 
     num_params = sum(p.numel() for p in model.parameters()) / 1e6

@@ -4,9 +4,21 @@ Evaluation, streaming text generation, multimodal interaction, benchmarking, and
 
 ---
 
-## 1. Text Inference & Interactive Chat
+## 1. Interactive Terminal CLI (`cli/`) & Text Inference
 
-`scripts/infer/text.py` provides real-time token streaming (`TextStreamer`) and multi-turn REPL capabilities.
+`cli/` provides a dedicated terminal console (`rich` + `prompt_toolkit`) with live streaming panels, bottom status bar telemetry (`tok/s`, `TTFT`, token count), and slash-command autocompletion (`/mode`, `/model`, `/temp`, `/preset`, `/clear`, `/status`, `/help`).
+
+```bash
+# Launch interactive terminal CLI (auto-detects base vs chat mode from checkpoint path)
+make cli
+# or directly:
+python -m cli --model checkpoints/pretrain/model
+
+# Single-shot streaming generation via CLI module
+python -m cli --model checkpoints/pretrain/model --prompt "def binary_search(arr: list[int], target: int) -> int:"
+```
+
+For lightweight script-based generation without TUI formatting, `scripts/infer/text.py` is also available:
 
 ```bash
 # Single prompt generation

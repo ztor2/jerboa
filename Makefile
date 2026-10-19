@@ -1,4 +1,4 @@
-.PHONY: help pretrain sft dpo grpo multimodal tokenizer bench chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
+.PHONY: help pretrain sft dpo grpo multimodal tokenizer bench eval-pretrain cli chat history clean upload upload-pretrain upload-sft upload-dpo upload-grpo
 
 VENV_PYTHON := $(shell if [ -f .venv/bin/python ]; then echo .venv/bin/python; elif command -v python3 >/dev/null 2>&1; then echo python3; else echo python; fi)
 PYTHON ?= $(VENV_PYTHON)
@@ -28,6 +28,7 @@ help:
 	@echo "  make multimodal       - Run Multimodal Alignment (recipes/multimodal.yaml)"
 	@echo "  make bench            - Run Apple Silicon (MPS) Throughput Benchmark"
 	@echo "  make eval-pretrain    - Evaluate Pre-trained Base Model (PPL, BPB & Zero-Shot MC)"
+	@echo "  make cli              - Launch Interactive Terminal CLI App (cli/)"
 	@echo "  make chat             - Launch Interactive Text Chat REPL"
 	@echo "  make history          - View Training Provenance Ledger & Loss Curves"
 	@echo "  make upload           - Upload checkpoint to HF Hub (STAGE=pretrain|sft|dpo|grpo, default: sft)"
@@ -72,6 +73,9 @@ bench:
 
 eval-pretrain:
 	$(PYTHON) tests/eval/pretrain.py
+
+cli:
+	$(PYTHON) -m cli
 
 chat:
 	$(PYTHON) scripts/infer/text.py --chat
