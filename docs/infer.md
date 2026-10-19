@@ -44,12 +44,18 @@ python scripts/infer/multimodal.py --checkpoint checkpoints/multimodal/unified/s
 
 ---
 
-## 3. Benchmarking
+## 3. Stage Evaluation & Hardware Benchmarking
 
-`tests/benchmark.py` measures prefill throughput, autoregressive decoding speed, and active VRAM usage on Apple Silicon (MPS).
+Stage-specific evaluation suites live under `tests/eval/` (e.g., `pretrain.py`, with future `sft.py` and `rl.py` modules), while `tests/benchmark.py` measures hardware throughput on Apple Silicon (MPS).
 
 ```bash
-# Standard benchmark (prompt: 128 tokens, generation: 64 tokens)
+# Pre-training stage evaluation (Held-out Perplexity, Bits-Per-Byte & Zero-Shot Log-Likelihood MC)
+python tests/eval/pretrain.py --model ztor2/jerboa-base
+
+# Or via Makefile shortcut
+make eval-pretrain
+
+# Standard hardware throughput benchmark (prompt: 128 tokens, generation: 64 tokens)
 python tests/benchmark.py --prompt_len 128 --gen_len 64
 
 # Long-context benchmark

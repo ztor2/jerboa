@@ -27,6 +27,7 @@ help:
 	@echo "  make grpo             - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
 	@echo "  make multimodal       - Run Multimodal Alignment (recipes/multimodal.yaml)"
 	@echo "  make bench            - Run Apple Silicon (MPS) Throughput Benchmark"
+	@echo "  make eval-pretrain    - Evaluate Pre-trained Base Model (PPL, BPB & Zero-Shot MC)"
 	@echo "  make chat             - Launch Interactive Text Chat REPL"
 	@echo "  make history          - View Training Provenance Ledger & Loss Curves"
 	@echo "  make upload           - Upload checkpoint to HF Hub (STAGE=pretrain|sft|dpo|grpo, default: sft)"
@@ -68,6 +69,9 @@ tokenizer:
 
 bench:
 	$(PYTHON) tests/benchmark.py
+
+eval-pretrain:
+	$(PYTHON) tests/eval/pretrain.py
 
 chat:
 	$(PYTHON) scripts/infer/text.py --chat
