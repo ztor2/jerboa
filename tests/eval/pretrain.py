@@ -391,7 +391,12 @@ def evaluate_multiple_choice(
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate Jerboa Pre-trained Base Model")
-    default_ckpt = "checkpoints/pretrain/hub_latest" if os.path.exists("checkpoints/pretrain/hub_latest") else "ztor2/jerboa-base"
+    if os.path.exists("checkpoints/pretrain/model"):
+        default_ckpt = "checkpoints/pretrain/model"
+    elif os.path.exists("checkpoints/pretrain/hub_latest"):
+        default_ckpt = "checkpoints/pretrain/hub_latest"
+    else:
+        default_ckpt = "ztor2/jerboa-base"
     parser.add_argument("--model", type=str, default=default_ckpt, help="Local checkpoint path or HF Hub repo ID")
     parser.add_argument("--device", type=str, default=None, help="Device (mps, cuda, cpu)")
     args = parser.parse_args()
