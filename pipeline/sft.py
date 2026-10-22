@@ -34,7 +34,7 @@ from torch.utils.data import DataLoader, Dataset
 from model.config import JerboaConfig
 from model.modeling import JerboaForCausalLM
 from model.tokenizer import get_default_tokenizer
-from pipeline.checkpoint_manager import CheckpointManager, GracefulInterruptHandler, SleepGuard, get_device
+from pipeline.checkpoint_manager import CheckpointManager, GracefulInterruptHandler, SleepGuard, SystemResourceGuard, get_device
 
 DEFAULT_SFT_EXAMPLES = [
     {
@@ -153,16 +153,20 @@ def run_sft(
     model_path_or_name: Optional[str] = None,
     output_dir: str = "checkpoints/sft",
     data_path: Optional[str] = None,
-    epochs: int = 3,
-    batch_size: int = 2,
-    lr: float = 2e-4,
+    val_data_path: Optional[str] = None,
+    epochs: int = 2,
+    batch_size: int = 4,
+    grad_accum_steps: int = 2,
+    lr: float = 1e-4,
     max_length: int = 768,
-    save_steps: int = 50,
+    save_steps: int = 100,
     save_total_limit: int = 3,
     resume: Optional[str] = None,
     use_wandb: bool = False,
     wandb_project: str = "jerboa",
     wandb_run_name: Optional[str] = None,
+    max_mem_fraction: float = 0.6,
+    system_ram_limit: float = 85.0,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = get_device()
@@ -173,6 +177,9 @@ def run_sft(
     interrupt_handler = GracefulInterruptHandler()
     sleep_guard = SleepGuard()
     sleep_guard.start()
+
+    resource_guard = SystemResourceGuard(max_mps_fraction=max_mem_fraction, system_ram_threshold=system_ram_limit)
+    resource_guard.setup()
 
     # Determine resume checkpoint
     ckpt_to_resume = None
@@ -281,9 +288,28 @@ def run_sft(
     dataset = SFTChatDataset(raw_data, tokenizer, max_length=max_length)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
+    val_dataloader = None
+    if val_data_path and os.path.exists(val_data_path):
+        val_raw_data = []
+        if val_data_path.endswith(".jsonl"):
+            with open(val_data_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        val_raw_data.append(json.loads(line))
+        else:
+            with open(val_data_path, "r", encoding="utf-8") as f:
+                loaded = json.load(f)
+                val_raw_data = loaded if isinstance(loaded, list) else [loaded]
+        if val_raw_data:
+            val_dataset = SFTChatDataset(val_raw_data, tokenizer, max_length=max_length)
+            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            print(f"Loaded validation set: {len(val_dataset)} samples")
+
     # 3. Optimizer & Scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-    total_steps = len(dataloader) * epochs
+    effective_steps_per_epoch = max(1, len(dataloader) // grad_accum_steps)
+    total_steps = effective_steps_per_epoch * epochs
     warmup_steps = max(10, int(total_steps * 0.05))
     from transformers import get_cosine_schedule_with_warmup
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
@@ -306,7 +332,8 @@ def run_sft(
         print(f"[Resume] Restored state -> Step: {global_step}, Epoch: {start_epoch}, Step in Epoch: {step_in_epoch}")
 
     # 4. Training Loop
-    print(f"\n--- Starting Supervised Fine-Tuning ({epochs} Epochs, {len(dataset)} Samples) ---")
+    eff_batch = batch_size * grad_accum_steps
+    print(f"\n--- Starting Supervised Fine-Tuning ({epochs} Epochs, {len(dataset)} Samples, Effective Batch: {eff_batch}) ---")
     model.train()
     start_time = time.time()
     interrupted = False
@@ -315,6 +342,9 @@ def run_sft(
         for epoch in range(start_epoch, epochs + 1):
             epoch_loss = 0.0
             completed_batches = 0
+            accum_loss = 0.0
+            optimizer.zero_grad()
+
             for batch_idx, batch in enumerate(dataloader):
                 if epoch == start_epoch and batch_idx < step_in_epoch:
                     continue
@@ -323,44 +353,55 @@ def run_sft(
                 attention_mask = batch["attention_mask"].to(device)
                 labels = batch["labels"].to(device)
 
-                optimizer.zero_grad()
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                loss = outputs.loss
+                raw_loss = outputs.loss
+                loss = raw_loss / grad_accum_steps
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                scheduler.step()
 
-                step_loss = loss.item()
+                step_loss = raw_loss.item()
                 epoch_loss += step_loss
+                accum_loss += step_loss
                 completed_batches += 1
-                global_step += 1
 
-                if global_step % 10 == 0:
-                    current_lr = scheduler.get_last_lr()[0]
-                    print(f"Epoch {epoch}/{epochs} | Step {global_step:4d} (Batch {batch_idx + 1}/{len(dataloader)}) | Loss: {step_loss:.4f} | LR: {current_lr:.2e}")
+                is_accum_step = ((batch_idx + 1) % grad_accum_steps == 0) or ((batch_idx + 1) == len(dataloader))
+                if is_accum_step:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad()
+                    global_step += 1
 
-                if use_wandb:
-                    wandb.log({
-                        "train/loss": step_loss,
-                        "train/epoch": epoch,
-                        "train/lr": scheduler.get_last_lr()[0],
-                        "global_step": global_step,
-                    })
+                    if global_step % 10 == 0:
+                        current_lr = scheduler.get_last_lr()[0]
+                        avg_step_loss = accum_loss / grad_accum_steps
+                        print(f"Epoch {epoch}/{epochs} | Step {global_step:4d} (Batch {batch_idx + 1}/{len(dataloader)}) | Loss: {avg_step_loss:.4f} | LR: {current_lr:.2e}")
+                        accum_loss = 0.0
 
-                # Periodic Step Checkpoint
-                if save_steps > 0 and global_step % save_steps == 0:
-                    saved_path = checkpoint_mgr.save(
-                        model=model,
-                        tokenizer=tokenizer,
-                        optimizer=optimizer,
-                        scheduler=scheduler,
-                        step=global_step,
-                        epoch=epoch,
-                        step_in_epoch=batch_idx + 1,
-                        metrics={"loss": step_loss},
-                    )
-                    print(f"[Checkpoint] Saved step checkpoint: {saved_path}")
+                    if device.type == "mps" and global_step % 50 == 0:
+                        torch.mps.empty_cache()
+                        resource_guard.check_and_throttle()
+
+                    if use_wandb:
+                        wandb.log({
+                            "train/loss": step_loss,
+                            "train/epoch": epoch,
+                            "train/lr": scheduler.get_last_lr()[0],
+                            "global_step": global_step,
+                        })
+
+                    # Periodic Step Checkpoint
+                    if save_steps > 0 and global_step % save_steps == 0:
+                        saved_path = checkpoint_mgr.save(
+                            model=model,
+                            tokenizer=tokenizer,
+                            optimizer=optimizer,
+                            scheduler=scheduler,
+                            step=global_step,
+                            epoch=epoch,
+                            step_in_epoch=batch_idx + 1,
+                            metrics={"loss": step_loss},
+                        )
+                        print(f"[Checkpoint] Saved step checkpoint: {saved_path}")
 
                 # Interrupt check (Ctrl+C / SIGINT / SIGTERM)
                 if interrupt_handler.interrupted:
@@ -385,7 +426,30 @@ def run_sft(
                 break
 
             avg_loss = epoch_loss / max(completed_batches, 1)
-            print(f"=== Epoch {epoch} Complete | Average Loss: {avg_loss:.4f} ===")
+
+            # Validation evaluation
+            val_loss_str = ""
+            metrics = {"loss": avg_loss}
+            if val_dataloader:
+                model.eval()
+                val_loss_sum = 0.0
+                val_batches = 0
+                with torch.no_grad():
+                    for vbatch in val_dataloader:
+                        v_ids = vbatch["input_ids"].to(device)
+                        v_mask = vbatch["attention_mask"].to(device)
+                        v_lbl = vbatch["labels"].to(device)
+                        vout = model(input_ids=v_ids, attention_mask=v_mask, labels=v_lbl)
+                        val_loss_sum += vout.loss.item()
+                        val_batches += 1
+                val_loss = val_loss_sum / max(val_batches, 1)
+                val_loss_str = f" | Val Loss: {val_loss:.4f}"
+                metrics["val_loss"] = val_loss
+                if use_wandb:
+                    wandb.log({"val/loss": val_loss, "epoch": epoch})
+                model.train()
+
+            print(f"=== Epoch {epoch} Complete | Train Loss: {avg_loss:.4f}{val_loss_str} ===")
             if use_wandb:
                 wandb.log({
                     "train/avg_epoch_loss": avg_loss,
@@ -401,7 +465,7 @@ def run_sft(
                 step=global_step,
                 epoch=epoch,
                 step_in_epoch=len(dataloader),
-                metrics={"loss": avg_loss},
+                metrics=metrics,
                 tag=f"epoch_{epoch:03d}",
             )
             step_in_epoch = 0
@@ -432,6 +496,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default=default_base, help="Base model path or HF repo id (default: ztor2/jerboa)")
     parser.add_argument("--epochs", type=int, default=2, help="Number of training epochs")
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
+    parser.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--max_length", type=int, default=768, help="Max sequence length")
     parser.add_argument("--save_steps", type=int, default=100, help="Save intermediate checkpoint every N steps")
@@ -439,6 +504,9 @@ if __name__ == "__main__":
     parser.add_argument("--resume", nargs="?", const="auto", default=None, help="Resume training ('auto' or checkpoint path)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/sft")
     parser.add_argument("--data", type=str, default=default_data, help="JSON or JSONL dataset path")
+    parser.add_argument("--val_data", type=str, default=None, help="Validation JSON or JSONL dataset path")
+    parser.add_argument("--max_mem_fraction", type=float, default=0.6, help="MPS memory limit fraction")
+    parser.add_argument("--system_ram_limit", type=float, default=85.0, help="System RAM warning limit percentage")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -449,8 +517,10 @@ if __name__ == "__main__":
         model_path_or_name=args.model,
         output_dir=args.output_dir,
         data_path=args.data,
+        val_data_path=getattr(args, "val_data", None),
         epochs=args.epochs,
         batch_size=args.batch_size,
+        grad_accum_steps=getattr(args, "grad_accum", 2),
         lr=args.lr,
         max_length=getattr(args, "max_length", 768),
         save_steps=args.save_steps,
@@ -459,4 +529,6 @@ if __name__ == "__main__":
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
+        max_mem_fraction=getattr(args, "max_mem_fraction", 0.6),
+        system_ram_limit=getattr(args, "system_ram_limit", 85.0),
     )
