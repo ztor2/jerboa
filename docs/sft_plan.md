@@ -56,5 +56,11 @@ The trial SFT dataset is built by combining verified clean subsets of 2025/2026 
 - **Cosine Learning Rate Schedule**:
   - `get_cosine_schedule_with_warmup` with 5% warmup steps and cosine decay down to 0.
   - Default learning rate: `1.0e-4` (conservative to protect pre-trained base representations).
+- **Apple Silicon (MPS) Resource Guard & Stability**:
+  - `grad_accum: 2` with `batch_size: 4` -> effective batch size of 8 (~1,610 optimizer steps/epoch).
+  - `SystemResourceGuard`: Enforces 60% MPS allocation limit and 85% system RAM threshold; renices training process to background priority to prevent macOS UI stuttering.
+  - Periodic MPS memory cleanup: `torch.mps.empty_cache()` every 50 global steps.
+  - `SleepGuard`: Invokes `caffeinate` to prevent system sleep during long training runs.
+  - Validation set loss evaluation performed at epoch completion.
 - **Resume & Fault Tolerance**:
   - Full optimizer and scheduler state preservation in step/epoch checkpoints.
