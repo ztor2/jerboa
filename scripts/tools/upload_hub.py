@@ -77,14 +77,21 @@ def upload_checkpoint(
         print(f"❌ Checkpoint directory '{checkpoint_dir}' does not exist.")
         sys.exit(1)
 
-    # 1. Check HF Authentication
+    # 1. Check HF Authentication (support .env HF_KEY / HF_TOKEN / HUGGINGFACE_API_KEY)
     try:
-        user_info = whoami()
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+    hf_token = os.getenv("HF_KEY") or os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_API_KEY")
+
+    try:
+        user_info = whoami(token=hf_token)
         username = user_info["name"]
         print(f"🔑 Logged in as Hugging Face user: '{username}'")
     except Exception as e:
         print(f"❌ Not logged in to Hugging Face: {e}")
-        print("💡 Please run: huggingface-cli login")
+        print("💡 Please run: huggingface-cli login or set HF_KEY in .env")
         sys.exit(1)
 
     repo_id = f"{username}/{repo_name}"
@@ -135,7 +142,7 @@ def upload_checkpoint(
 
     # 4. Generate clean Model Card README.md
     readme_path = os.path.join(checkpoint_dir, "README.md")
-    card_content = generate_model_card(repo_id, stage, 145.9)
+    card_content = generate_model_card(repo_id, stage, 221.4)
     with open(readme_path, "w", encoding="utf-8") as f:
         f.write(card_content)
     print("  └ Generated Model Card: README.md")
@@ -145,7 +152,7 @@ def upload_checkpoint(
         return
 
     # 5. Upload via HfApi
-    api = HfApi()
+    api = HfApi(token=hf_token)
     print(f"\n🚀 Creating repository (if not exists): {repo_id} (private={private})")
     api.create_repo(repo_id=repo_id, repo_type="model", private=private, exist_ok=True)
 
