@@ -12,5 +12,6 @@ data/manifests/
 .env
 wandb/
 tmp/
+logs/
 aihubshell*
 *.tar
