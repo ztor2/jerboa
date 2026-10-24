@@ -594,3 +594,5 @@ if __name__ == "__main__":
         seed=args.seed,
         skip_open=args.skip_open,
     )
+    sys.stdout.flush()
+    os._exit(0)
