@@ -144,20 +144,20 @@ class SFTChatDataset(Dataset):
 
 
 class SFTDynamicCollator:
-    """Pad each batch dynamically to a multiple of `pad_to_multiple_of` (capped at `max_length`) to minimize MPS memory and fragmentation."""
+    """Pad each batch dynamically to a coarse bucket (`1024` or `max_length`) to prevent MPSGraph shape-compilation cache bloat."""
 
-    def __init__(self, pad_token_id: int = 0, max_length: int = 2048, pad_to_multiple_of: int = 64):
+    def __init__(self, pad_token_id: int = 0, max_length: int = 2048, buckets: tuple[int, ...] = (1024, 2048)):
         self.pad_token_id = pad_token_id
         self.max_length = max_length
-        self.pad_to_multiple_of = pad_to_multiple_of
+        self.buckets = tuple(sorted(b for b in buckets if b <= max_length)) + (max_length,)
 
     def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
         max_batch_len = max(item["input_ids"].size(0) for item in batch)
-        if self.pad_to_multiple_of > 1:
-            target_len = ((max_batch_len + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of) * self.pad_to_multiple_of
-            target_len = min(self.max_length, target_len)
-        else:
-            target_len = min(self.max_length, max_batch_len)
+        target_len = self.max_length
+        for b in self.buckets:
+            if max_batch_len <= b:
+                target_len = b
+                break
 
         bsz = len(batch)
         input_ids = torch.full((bsz, target_len), self.pad_token_id, dtype=torch.long)
@@ -320,7 +320,7 @@ def run_sft(
     collator = SFTDynamicCollator(
         pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0,
         max_length=max_length,
-        pad_to_multiple_of=64,
+        buckets=(1024, max_length),
     )
     dataset = SFTChatDataset(raw_data, tokenizer, max_length=max_length)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator)
@@ -375,50 +375,81 @@ def run_sft(
     start_time = time.time()
     interrupted = False
 
+    import contextlib
+    autocast_context = (
+        torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+        if device.type == "cuda" and torch.cuda.is_bf16_supported()
+        else (torch.autocast(device_type="cuda", dtype=torch.float16) if device.type == "cuda" else contextlib.nullcontext())
+    )
+
     try:
         for epoch in range(start_epoch, epochs + 1):
             epoch_loss = 0.0
             completed_batches = 0
             accum_loss = 0.0
             had_long_batch = False
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             for batch_idx, batch in enumerate(dataloader):
                 if epoch == start_epoch and batch_idx < step_in_epoch:
                     continue
 
                 batch_seq_len = batch["input_ids"].size(1)
-                if batch_seq_len >= 1408:
+                bsz_cur = batch["input_ids"].size(0)
+                if batch_seq_len >= 1024:
                     had_long_batch = True
 
-                input_ids = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                labels = batch["labels"].to(device)
+                # On MPS, split long batches (>1024 tokens) into single-sample micro-passes using only 2 bucket shapes (1024, max_length)
+                if device.type == "mps" and batch_seq_len > 1024 and bsz_cur > 1:
+                    valid_counts = (batch["labels"][:, 1:] != -100).sum(dim=1).float()
+                    total_valid = valid_counts.sum().clamp(min=1.0).item()
+                    step_loss = 0.0
+                    for micro_i in range(bsz_cur):
+                        w_i = float(valid_counts[micro_i].item()) / total_valid
+                        if w_i <= 0.0:
+                            continue
+                        raw_m_len = int(batch["attention_mask"][micro_i].sum().item())
+                        m_len = 1024 if raw_m_len <= 1024 else max_length
+                        m_ids = batch["input_ids"][micro_i : micro_i + 1, :m_len].to(device)
+                        m_mask = batch["attention_mask"][micro_i : micro_i + 1, :m_len].to(device)
+                        m_lbls = batch["labels"][micro_i : micro_i + 1, :m_len].to(device)
+                        with autocast_context:
+                            m_out = model(input_ids=m_ids, attention_mask=m_mask, labels=m_lbls)
+                            m_raw = m_out.loss
+                            step_loss += m_raw.item() * w_i
+                            m_loss = (m_raw * w_i) / grad_accum_steps
+                        del m_out, m_raw
+                        m_loss.backward()
+                        del m_ids, m_mask, m_lbls, m_loss
+                else:
+                    input_ids = batch["input_ids"].to(device)
+                    attention_mask = batch["attention_mask"].to(device)
+                    labels = batch["labels"].to(device)
 
-                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                raw_loss = outputs.loss
-                loss = raw_loss / grad_accum_steps
-                loss.backward()
+                    with autocast_context:
+                        outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                        raw_loss = outputs.loss
+                        step_loss = raw_loss.item()
+                        loss = raw_loss / grad_accum_steps
+                    del outputs, raw_loss
+                    loss.backward()
+                    del input_ids, attention_mask, labels, loss
 
-                step_loss = raw_loss.item()
                 epoch_loss += step_loss
                 accum_loss += step_loss
                 completed_batches += 1
-
-                # Drop references to batch tensors before optimizer step
-                del input_ids, attention_mask, labels, outputs, raw_loss, loss
 
                 is_accum_step = ((batch_idx + 1) % grad_accum_steps == 0) or ((batch_idx + 1) == len(dataloader))
                 if is_accum_step:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                     optimizer.step()
                     scheduler.step()
-                    optimizer.zero_grad()
+                    optimizer.zero_grad(set_to_none=True)
                     global_step += 1
 
                     if global_step % 10 == 0:
                         current_lr = scheduler.get_last_lr()[0]
-                        avg_step_loss = accum_loss / grad_accum_steps
+                        avg_step_loss = accum_loss / (10 * grad_accum_steps)
                         print(f"Epoch {epoch}/{epochs} | Step {global_step:4d} (Batch {batch_idx + 1}/{len(dataloader)}) | Loss: {avg_step_loss:.4f} | LR: {current_lr:.2e}")
                         accum_loss = 0.0
 

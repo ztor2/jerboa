@@ -243,10 +243,14 @@ class JerboaAttention(nn.Module):
         attn_mask = None
         is_causal = False
 
-        has_padding = (
+        has_non_causal_padding = (
             attention_mask is not None
             and attention_mask.dim() == 2
             and not (attention_mask == 1).all()
+            and (
+                q_len != kv_len
+                or not (attention_mask[:, :-1] >= attention_mask[:, 1:]).all()
+            )
         )
         need_swa = (
             self.is_sliding
@@ -256,7 +260,8 @@ class JerboaAttention(nn.Module):
 
         if attention_mask is not None and attention_mask.dim() == 4:
             attn_mask = attention_mask
-        elif has_padding or need_swa:
+        elif has_non_causal_padding or need_swa:
+            has_padding = attention_mask is not None and attention_mask.dim() == 2
             q_pos = torch.arange(past_len, past_len + q_len, device=query_states.device).unsqueeze(1)
             k_pos = torch.arange(0, kv_len, device=key_states.device).unsqueeze(0)
             valid_mask = k_pos <= q_pos

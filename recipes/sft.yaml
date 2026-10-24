@@ -12,7 +12,7 @@ max_length: 2048
 save_steps: 100
 save_total_limit: 3
 resume: auto
-max_mem_fraction: 0.72
+max_mem_fraction: 0.85
 system_ram_limit: 88.0
 wandb: false
 wandb_project: jerboa
