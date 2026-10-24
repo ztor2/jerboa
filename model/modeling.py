@@ -578,8 +578,8 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
         def _chunk_fn(h_chunk: torch.Tensor, t_chunk: torch.Tensor) -> torch.Tensor:
             return F.cross_entropy(F.linear(h_chunk, weight), t_chunk, ignore_index=-100, reduction="sum")
 
-        total_loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype)
-        use_ckpt = self.model.gradient_checkpointing and self.training
+        total_loss = torch.tensor(0.0, device=hidden_states.device, dtype=torch.float32)
+        use_ckpt = self.training
         for idx in range(0, flat_h.size(0), chunk_size):
             t_c = flat_t[idx : idx + chunk_size]
             if (t_c != -100).any():
@@ -624,7 +624,7 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
         hidden_states = outputs[0]
         use_chunked_loss = (
             labels is not None
-            and self.model.gradient_checkpointing
+            and (self.training or self.model.gradient_checkpointing)
             and not kwargs.get("return_logits", False)
         )
         logits = None if use_chunked_loss else self.lm_head(hidden_states)

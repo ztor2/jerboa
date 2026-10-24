@@ -58,7 +58,7 @@ sft:
 	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe $(or $(RECIPE),recipes/sft.yaml) $(if $(RESUME),--resume $(RESUME),)
 
 sft-5090:
-	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft_5090.yaml $(if $(RESUME),--resume $(RESUME),)
+	PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True $(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft_5090.yaml $(if $(RESUME),--resume $(RESUME),)
 
 dpo:
 	$(RUNNER) $(PYTHON) pipeline/rl_dpo.py --recipe recipes/dpo.yaml
