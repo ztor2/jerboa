@@ -64,8 +64,9 @@ Rather than discarding reasoning or tool-use samples—or mixing unconditioned s
 - **ChatML Response Loss Masking (`pipeline/sft.py`)**:
   - Role headers (`<|im_start|>{role}\n`) and non-assistant turns (`system`, `user`, `tool`) are masked with `labels = -100`.
   - Only `assistant` response bodies (including `<think>...</think>`, `<answer>...</answer>`, `<tool_call>...</tool_call>`, and trailing `<|im_end|>\n`) receive gradient updates.
-- **Bucketed Dynamic Batch Padding & Apple Silicon (MPS) Stability (`pipeline/sft.py`)**:
+- **Device-Aware Dynamic Batch Padding & Hardware Recipes (`pipeline/sft.py`)**:
   - `max_length: 2048` matches the Phase 1 pretraining sequence length (`seq_len: 2048`, `sliding_window: 2048`).
-  - `SFTDynamicCollator` pads each batch dynamically to the nearest multiple of `64` tokens (capped at `2048`), avoiding unnecessary computation on short/medium batches while preventing Metal allocator buffer fragmentation.
-  - Gradient checkpointing enabled (`gradient_checkpointing: true`), `batch_size: 2`, `grad_accum: 4` (Effective Batch Size = 8).
-  - Adaptive MPS cache cleanup (`torch.mps.empty_cache()`) runs immediately after long batches ($\ge 1408$ tokens), every 25 optimizer steps, and around validation, keeping typical active MPS usage at ~4.5–5.5 GB and peak usage within ~7.3–8.0 GB (`max_mem_fraction: 0.72`, `system_ram_limit: 88.0%`).
+  - **Apple Silicon MPS (`recipes/sft.yaml`, `make sft`)**:
+    - Uses 2 coarse sequence buckets (`1024`, `2048`), chunked cross-entropy checkpointing, and single-sample micro-splitting on $>1024$ token batches so `MPSGraph` only caches 2 shader shapes, keeping total driver memory flat at ~6.5–7.2 GB (`batch_size: 2`, `grad_accum: 4`, `gradient_checkpointing: true`, `max_mem_fraction: 0.85`).
+  - **RunPod 1x RTX 5090 (`recipes/sft_5090.yaml`, `make sft-5090`)**:
+    - Uses automatic `bfloat16` mixed precision (`torch.autocast`), fine-grained 64-token dynamic buckets (`64..2048`), `pin_memory=True`, `batch_size: 8`, `grad_accum: 1`, and `gradient_checkpointing: false`, completing 2 epochs of 12,531 samples in ~5–7 minutes.

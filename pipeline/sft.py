@@ -227,6 +227,9 @@ def run_sft(
 
     # 1. Load Tokenizer & Model
     load_source = ckpt_to_resume if ckpt_to_resume else model_path_or_name
+    if load_source == "checkpoints/pretrain/model" and not os.path.exists(load_source):
+        print(f"Notice: Local path '{load_source}' not found; trying Hugging Face Hub 'ztor2/jerboa-base'...")
+        load_source = "ztor2/jerboa-base"
     try:
         print(f"Loading model from '{load_source}' (local or Hugging Face Hub)...")
         model = JerboaForCausalLM.from_pretrained(load_source)
@@ -238,7 +241,7 @@ def run_sft(
             vocab_size=len(tokenizer),
             hidden_size=768,
             intermediate_size=2048,
-            num_hidden_layers=16,
+            num_hidden_layers=28,
             num_attention_heads=12,
             num_key_value_heads=4,
             tie_word_embeddings=True,
@@ -317,13 +320,20 @@ def run_sft(
         print("Using built-in multi-turn conversation dataset...")
         raw_data = DEFAULT_SFT_EXAMPLES * 8  # Repeat for multiple training batches
 
+    # CUDA supports fine-grained 64-token dynamic buckets; MPS uses 2 coarse buckets (1024, max_length) to prevent MPSGraph cache bloat
+    pad_buckets = (
+        tuple(range(64, max_length + 1, 64))
+        if device.type == "cuda"
+        else (1024, max_length)
+    )
     collator = SFTDynamicCollator(
         pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0,
         max_length=max_length,
-        buckets=(1024, max_length),
+        buckets=pad_buckets,
     )
     dataset = SFTChatDataset(raw_data, tokenizer, max_length=max_length)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator)
+    use_pin = device.type == "cuda"
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator, pin_memory=use_pin)
 
     val_dataloader = None
     if val_data_path and os.path.exists(val_data_path):
@@ -340,7 +350,7 @@ def run_sft(
                 val_raw_data = loaded if isinstance(loaded, list) else [loaded]
         if val_raw_data:
             val_dataset = SFTChatDataset(val_raw_data, tokenizer, max_length=max_length)
-            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collator)
+            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collator, pin_memory=use_pin)
             print(f"Loaded validation set: {len(val_dataset)} samples")
 
     # 3. Optimizer & Scheduler

@@ -22,7 +22,8 @@ help:
 	@echo "  make pretrain-smoke   - Run Quick Smoke Test (recipes/pretrain/smoke_test.yaml)"
 	@echo "  make pretrain-ddp     - Run Distributed Multi-GPU Pre-training (GPUS=2, torchrun)"
 	@echo "  make pretrain-runpod  - Run RunPod 2x 3090 DDP (recipes/pretrain/runpod_ddp.yaml)"
-	@echo "  make sft              - Run Supervised Fine-Tuning (RESUME=auto supported)"
+	@echo "  make sft              - Run Supervised Fine-Tuning (recipes/sft.yaml, RESUME=auto supported)"
+	@echo "  make sft-5090         - Run SFT on RunPod 1x RTX 5090 (recipes/sft_5090.yaml, BF16)"
 	@echo "  make dpo              - Run Direct Preference Optimization (recipes/dpo.yaml)"
 	@echo "  make grpo             - Run Group Relative Policy Optimization (recipes/grpo.yaml)"
 	@echo "  make multimodal       - Run Multimodal Alignment (recipes/multimodal.yaml)"
@@ -54,7 +55,10 @@ pretrain-runpod:
 	$(TORCHRUN) --nproc_per_node=$(GPUS) pipeline/pretrain.py --recipe recipes/pretrain/runpod_ddp.yaml $(if $(RESUME),--resume $(RESUME),)
 
 sft:
-	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft.yaml $(if $(RESUME),--resume $(RESUME),)
+	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe $(or $(RECIPE),recipes/sft.yaml) $(if $(RESUME),--resume $(RESUME),)
+
+sft-5090:
+	$(RUNNER) $(PYTHON) pipeline/sft.py --recipe recipes/sft_5090.yaml $(if $(RESUME),--resume $(RESUME),)
 
 dpo:
 	$(RUNNER) $(PYTHON) pipeline/rl_dpo.py --recipe recipes/dpo.yaml
