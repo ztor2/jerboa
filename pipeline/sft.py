@@ -167,6 +167,7 @@ def run_sft(
     wandb_run_name: Optional[str] = None,
     max_mem_fraction: float = 0.6,
     system_ram_limit: float = 85.0,
+    gradient_checkpointing: bool = True,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = get_device()
@@ -218,6 +219,9 @@ def run_sft(
         model = JerboaForCausalLM(config)
 
     model.to(device)
+    if gradient_checkpointing and hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
+        print("[Memory] Gradient checkpointing enabled (reduced activation memory).")
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     if use_wandb:
@@ -505,8 +509,10 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="checkpoints/sft")
     parser.add_argument("--data", type=str, default=default_data, help="JSON or JSONL dataset path")
     parser.add_argument("--val_data", type=str, default=None, help="Validation JSON or JSONL dataset path")
-    parser.add_argument("--max_mem_fraction", type=float, default=0.6, help="MPS memory limit fraction")
+    parser.add_argument("--max_mem_fraction", type=float, default=0.7, help="MPS memory limit fraction")
     parser.add_argument("--system_ram_limit", type=float, default=85.0, help="System RAM warning limit percentage")
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=True, help="Enable gradient checkpointing")
+    parser.add_argument("--no_gradient_checkpointing", action="store_false", dest="gradient_checkpointing", help="Disable gradient checkpointing")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
     parser.add_argument("--wandb_project", type=str, default="jerboa", help="W&B project name (default: jerboa)")
     parser.add_argument("--wandb_run", type=str, default=None, help="W&B run name")
@@ -529,6 +535,7 @@ if __name__ == "__main__":
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
-        max_mem_fraction=getattr(args, "max_mem_fraction", 0.6),
+        max_mem_fraction=getattr(args, "max_mem_fraction", 0.7),
         system_ram_limit=getattr(args, "system_ram_limit", 85.0),
+        gradient_checkpointing=getattr(args, "gradient_checkpointing", True),
     )
