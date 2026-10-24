@@ -42,14 +42,14 @@ Rather than discarding reasoning or tool-use samples—or mixing unconditioned s
 
 | Protocol | System Prompt Conditioning | Assistant Target Structure | Share (%) |
 | :--- | :--- | :--- | :---: |
-| **`chat`** | `You are Jerboa, a helpful, respectful, and intelligent AI assistant.` | Pure conversational response (zero `<think>` or `<tool_call>` tags) | ~78.7% |
-| **`reasoning`** | `...Reason step-by-step before providing your final answer.` | `<think>\n{CoT}\n</think>\n{Solution}` (+ `<answer>{X}</answer>` on math) | ~11.0% |
+| **`chat`** | `You are Jerboa, a helpful, respectful, and intelligent AI assistant.` | Pure conversational response (zero `<think>` or `<tool_call>` tags) | ~74.1% |
+| **`reasoning`** | `...Reason step-by-step before providing your final answer.` | `<think>\n{CoT}\n</think>\n{Solution}` (+ `<answer>{X}</answer>` on math) | ~15.8% |
 | **`code`** | `You are Jerboa, a helpful, respectful, and intelligent AI assistant.` | Concise explanation + Markdown fenced code blocks | ~7.1% |
-| **`tool_call`** | `...with tool-calling capabilities.\n\nYou have access to the following tools:\n<tools>...</tools>` | `<tool_call>[...]</tool_call>` and `<tool_response>...</tool_response>` | ~3.3% |
+| **`tool_call`** | `...with tool-calling capabilities.\n\nYou have access to the following tools:\n<tools>...</tools>` | `<tool_call>[...]</tool_call>` and `<tool_response>...</tool_response>` | ~3.0% |
 
 - **Dataset Split (`data/sft/`)**:
-  - `train.jsonl`: 11,655 unique samples ($\le 768$ tokens, 100% tag-balanced).
-  - `val.jsonl`: 613 unique samples.
+  - `train.jsonl`: 12,531 unique samples ($\le 2048$ tokens, 100% tag-balanced, preserving ~98.5%+ of chat/code/tool and ~90% of `<think>` reasoning).
+  - `val.jsonl`: 659 unique samples.
   - `sample.json`: Representative Korean/English samples across all four protocols.
 - **Strict Hygiene Checks**:
   - Regex filtering eliminates PII masking placeholders (`#이름#`, `#주소#`, `#소속#`).
@@ -64,7 +64,8 @@ Rather than discarding reasoning or tool-use samples—or mixing unconditioned s
 - **ChatML Response Loss Masking (`pipeline/sft.py`)**:
   - Role headers (`<|im_start|>{role}\n`) and non-assistant turns (`system`, `user`, `tool`) are masked with `labels = -100`.
   - Only `assistant` response bodies (including `<think>...</think>`, `<answer>...</answer>`, `<tool_call>...</tool_call>`, and trailing `<|im_end|>\n`) receive gradient updates.
-- **Apple Silicon (MPS) Stability**:
-  - Gradient checkpointing enabled (`gradient_checkpointing: true`), reducing 28-layer activation memory from ~13 GB to ~2.0 GB without affecting gradient precision.
-  - `batch_size: 2`, `grad_accum: 4` (Effective Batch Size = 8).
-  - `SystemResourceGuard` (`max_mem_fraction: 0.7`, `system_ram_limit: 85.0%`) and `SleepGuard` (`caffeinate`).
+- **Bucketed Dynamic Batch Padding & Apple Silicon (MPS) Stability (`pipeline/sft.py`)**:
+  - `max_length: 2048` matches the Phase 1 pretraining sequence length (`seq_len: 2048`, `sliding_window: 2048`).
+  - `SFTDynamicCollator` pads each batch dynamically to the nearest multiple of `64` tokens (capped at `2048`), avoiding unnecessary computation on short/medium batches while preventing Metal allocator buffer fragmentation.
+  - Gradient checkpointing enabled (`gradient_checkpointing: true`), `batch_size: 2`, `grad_accum: 4` (Effective Batch Size = 8).
+  - Adaptive MPS cache cleanup (`torch.mps.empty_cache()`) runs immediately after long batches ($\ge 1408$ tokens), every 25 optimizer steps, and around validation, keeping typical active MPS usage at ~4.5–5.5 GB and peak usage within ~7.3–8.0 GB (`max_mem_fraction: 0.72`, `system_ram_limit: 88.0%`).

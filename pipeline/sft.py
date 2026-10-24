@@ -71,7 +71,7 @@ DEFAULT_SFT_EXAMPLES = [
 class SFTChatDataset(Dataset):
     """Dataset that tokenizes chat messages and masks prompt tokens with -100."""
 
-    def __init__(self, data: List[Dict], tokenizer, max_length: int = 768):
+    def __init__(self, data: List[Dict], tokenizer, max_length: int = 2048):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.examples = []
@@ -127,15 +127,9 @@ class SFTChatDataset(Dataset):
                 skipped_count += 1
                 continue
 
-            # Pad to max_length
-            pad_len = max_length - len(input_ids)
-            attention_mask = [1] * len(input_ids) + [0] * pad_len
-            input_ids = input_ids + [tokenizer.pad_token_id] * pad_len
-            labels = labels + [-100] * pad_len
-
             self.examples.append({
                 "input_ids": torch.tensor(input_ids, dtype=torch.long),
-                "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+                "attention_mask": torch.ones(len(input_ids), dtype=torch.long),
                 "labels": torch.tensor(labels, dtype=torch.long),
             })
 
@@ -149,6 +143,40 @@ class SFTChatDataset(Dataset):
         return self.examples[idx]
 
 
+class SFTDynamicCollator:
+    """Pad each batch dynamically to a multiple of `pad_to_multiple_of` (capped at `max_length`) to minimize MPS memory and fragmentation."""
+
+    def __init__(self, pad_token_id: int = 0, max_length: int = 2048, pad_to_multiple_of: int = 64):
+        self.pad_token_id = pad_token_id
+        self.max_length = max_length
+        self.pad_to_multiple_of = pad_to_multiple_of
+
+    def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        max_batch_len = max(item["input_ids"].size(0) for item in batch)
+        if self.pad_to_multiple_of > 1:
+            target_len = ((max_batch_len + self.pad_to_multiple_of - 1) // self.pad_to_multiple_of) * self.pad_to_multiple_of
+            target_len = min(self.max_length, target_len)
+        else:
+            target_len = min(self.max_length, max_batch_len)
+
+        bsz = len(batch)
+        input_ids = torch.full((bsz, target_len), self.pad_token_id, dtype=torch.long)
+        attention_mask = torch.zeros((bsz, target_len), dtype=torch.long)
+        labels = torch.full((bsz, target_len), -100, dtype=torch.long)
+
+        for i, item in enumerate(batch):
+            seq_len = min(item["input_ids"].size(0), target_len)
+            input_ids[i, :seq_len] = item["input_ids"][:seq_len]
+            attention_mask[i, :seq_len] = 1
+            labels[i, :seq_len] = item["labels"][:seq_len]
+
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+
 def run_sft(
     model_path_or_name: Optional[str] = None,
     output_dir: str = "checkpoints/sft",
@@ -158,7 +186,7 @@ def run_sft(
     batch_size: int = 4,
     grad_accum_steps: int = 2,
     lr: float = 1e-4,
-    max_length: int = 768,
+    max_length: int = 2048,
     save_steps: int = 100,
     save_total_limit: int = 3,
     resume: Optional[str] = None,
@@ -289,8 +317,13 @@ def run_sft(
         print("Using built-in multi-turn conversation dataset...")
         raw_data = DEFAULT_SFT_EXAMPLES * 8  # Repeat for multiple training batches
 
+    collator = SFTDynamicCollator(
+        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0,
+        max_length=max_length,
+        pad_to_multiple_of=64,
+    )
     dataset = SFTChatDataset(raw_data, tokenizer, max_length=max_length)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collator)
 
     val_dataloader = None
     if val_data_path and os.path.exists(val_data_path):
@@ -307,7 +340,7 @@ def run_sft(
                 val_raw_data = loaded if isinstance(loaded, list) else [loaded]
         if val_raw_data:
             val_dataset = SFTChatDataset(val_raw_data, tokenizer, max_length=max_length)
-            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+            val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collator)
             print(f"Loaded validation set: {len(val_dataset)} samples")
 
     # 3. Optimizer & Scheduler
@@ -337,7 +370,7 @@ def run_sft(
 
     # 4. Training Loop
     eff_batch = batch_size * grad_accum_steps
-    print(f"\n--- Starting Supervised Fine-Tuning ({epochs} Epochs, {len(dataset)} Samples, Effective Batch: {eff_batch}) ---")
+    print(f"\n--- Starting Supervised Fine-Tuning ({epochs} Epochs, {len(dataset)} Samples, Effective Batch: {eff_batch}, Max Length: {max_length}) ---")
     model.train()
     start_time = time.time()
     interrupted = False
@@ -347,11 +380,16 @@ def run_sft(
             epoch_loss = 0.0
             completed_batches = 0
             accum_loss = 0.0
+            had_long_batch = False
             optimizer.zero_grad()
 
             for batch_idx, batch in enumerate(dataloader):
                 if epoch == start_epoch and batch_idx < step_in_epoch:
                     continue
+
+                batch_seq_len = batch["input_ids"].size(1)
+                if batch_seq_len >= 1408:
+                    had_long_batch = True
 
                 input_ids = batch["input_ids"].to(device)
                 attention_mask = batch["attention_mask"].to(device)
@@ -367,6 +405,9 @@ def run_sft(
                 accum_loss += step_loss
                 completed_batches += 1
 
+                # Drop references to batch tensors before optimizer step
+                del input_ids, attention_mask, labels, outputs, raw_loss, loss
+
                 is_accum_step = ((batch_idx + 1) % grad_accum_steps == 0) or ((batch_idx + 1) == len(dataloader))
                 if is_accum_step:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -381,9 +422,11 @@ def run_sft(
                         print(f"Epoch {epoch}/{epochs} | Step {global_step:4d} (Batch {batch_idx + 1}/{len(dataloader)}) | Loss: {avg_step_loss:.4f} | LR: {current_lr:.2e}")
                         accum_loss = 0.0
 
-                    if device.type == "mps" and global_step % 50 == 0:
+                    if device.type == "mps" and (had_long_batch or global_step % 25 == 0):
                         torch.mps.empty_cache()
-                        resource_guard.check_and_throttle()
+                        had_long_batch = False
+                        if global_step % 25 == 0:
+                            resource_guard.check_and_throttle()
 
                     if use_wandb:
                         wandb.log({
@@ -435,6 +478,8 @@ def run_sft(
             val_loss_str = ""
             metrics = {"loss": avg_loss}
             if val_dataloader:
+                if device.type == "mps":
+                    torch.mps.empty_cache()
                 model.eval()
                 val_loss_sum = 0.0
                 val_batches = 0
@@ -451,6 +496,8 @@ def run_sft(
                 metrics["val_loss"] = val_loss
                 if use_wandb:
                     wandb.log({"val/loss": val_loss, "epoch": epoch})
+                if device.type == "mps":
+                    torch.mps.empty_cache()
                 model.train()
 
             print(f"=== Epoch {epoch} Complete | Train Loss: {avg_loss:.4f}{val_loss_str} ===")
@@ -502,15 +549,15 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
     parser.add_argument("--grad_accum", type=int, default=2, help="Gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
-    parser.add_argument("--max_length", type=int, default=768, help="Max sequence length")
+    parser.add_argument("--max_length", type=int, default=2048, help="Max sequence length")
     parser.add_argument("--save_steps", type=int, default=100, help="Save intermediate checkpoint every N steps")
     parser.add_argument("--save_total_limit", type=int, default=3, help="Max number of intermediate step checkpoints to keep")
     parser.add_argument("--resume", nargs="?", const="auto", default=None, help="Resume training ('auto' or checkpoint path)")
     parser.add_argument("--output_dir", type=str, default="checkpoints/sft")
     parser.add_argument("--data", type=str, default=default_data, help="JSON or JSONL dataset path")
     parser.add_argument("--val_data", type=str, default=None, help="Validation JSON or JSONL dataset path")
-    parser.add_argument("--max_mem_fraction", type=float, default=0.7, help="MPS memory limit fraction")
-    parser.add_argument("--system_ram_limit", type=float, default=85.0, help="System RAM warning limit percentage")
+    parser.add_argument("--max_mem_fraction", type=float, default=0.72, help="MPS memory limit fraction")
+    parser.add_argument("--system_ram_limit", type=float, default=88.0, help="System RAM warning limit percentage")
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True, help="Enable gradient checkpointing")
     parser.add_argument("--no_gradient_checkpointing", action="store_false", dest="gradient_checkpointing", help="Disable gradient checkpointing")
     parser.add_argument("--wandb", action="store_true", help="Enable Weights & Biases experiment tracking")
@@ -528,14 +575,14 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
         grad_accum_steps=getattr(args, "grad_accum", 2),
         lr=args.lr,
-        max_length=getattr(args, "max_length", 768),
+        max_length=getattr(args, "max_length", 2048),
         save_steps=args.save_steps,
         save_total_limit=args.save_total_limit,
         resume=args.resume,
         use_wandb=args.wandb,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run,
-        max_mem_fraction=getattr(args, "max_mem_fraction", 0.7),
-        system_ram_limit=getattr(args, "system_ram_limit", 85.0),
+        max_mem_fraction=getattr(args, "max_mem_fraction", 0.72),
+        system_ram_limit=getattr(args, "system_ram_limit", 88.0),
         gradient_checkpointing=getattr(args, "gradient_checkpointing", True),
     )

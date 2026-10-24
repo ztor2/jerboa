@@ -555,6 +555,39 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
     def gradient_checkpointing_disable(self):
         self.model.gradient_checkpointing = False
 
+    def _chunked_cross_entropy(
+        self,
+        hidden_states: torch.Tensor,
+        targets: torch.Tensor,
+        chunk_size: int = 512,
+    ) -> torch.Tensor:
+        valid_mask = targets != -100
+        valid_total = valid_mask.sum()
+        if valid_total == 0:
+            return hidden_states.sum() * 0.0
+
+        flat_h = hidden_states.reshape(-1, hidden_states.size(-1))
+        flat_t = targets.reshape(-1)
+        weight = self.lm_head.weight
+
+        def _chunk_fn(h_chunk: torch.Tensor, t_chunk: torch.Tensor) -> torch.Tensor:
+            return F.cross_entropy(F.linear(h_chunk, weight), t_chunk, ignore_index=-100, reduction="sum")
+
+        total_loss = torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype)
+        use_ckpt = self.model.gradient_checkpointing and self.training
+        for idx in range(0, flat_h.size(0), chunk_size):
+            t_c = flat_t[idx : idx + chunk_size]
+            if (t_c != -100).any():
+                h_c = flat_h[idx : idx + chunk_size]
+                if use_ckpt:
+                    total_loss = total_loss + torch.utils.checkpoint.checkpoint(
+                        _chunk_fn, h_c, t_c, use_reentrant=False
+                    )
+                else:
+                    total_loss = total_loss + _chunk_fn(h_c, t_c)
+
+        return total_loss / valid_total
+
     def forward(
         self,
         input_ids: Optional[torch.LongTensor] = None,
@@ -584,18 +617,25 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        use_chunked_loss = (
+            labels is not None
+            and self.model.gradient_checkpointing
+            and not kwargs.get("return_logits", False)
+        )
+        logits = None if use_chunked_loss else self.lm_head(hidden_states)
 
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
-            shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            loss = F.cross_entropy(
-                shift_logits.view(-1, self.config.vocab_size),
-                shift_labels.view(-1),
-                ignore_index=-100,
-            )
+            if use_chunked_loss:
+                loss = self._chunked_cross_entropy(hidden_states[..., :-1, :], shift_labels)
+            else:
+                shift_logits = logits[..., :-1, :].contiguous()
+                loss = F.cross_entropy(
+                    shift_logits.view(-1, self.config.vocab_size),
+                    shift_labels.view(-1),
+                    ignore_index=-100,
+                )
 
             # Multi-Token Prediction loss (t -> t+2)
             if self.mtp_module is not None and shift_labels.shape[1] > 1:
@@ -608,13 +648,16 @@ class JerboaForCausalLM(JerboaPreTrainedModel, GenerationMixin):
 
                 pos_emb_mtp = self.model.rotary_emb(h_t, seq_len=h_t.shape[1])
                 mtp_hidden = self.mtp_module(h_t, e_t_plus_1, position_embeddings=pos_emb_mtp)
-                mtp_logits = self.lm_head(mtp_hidden)
 
-                mtp_loss = F.cross_entropy(
-                    mtp_logits.view(-1, self.config.vocab_size),
-                    t_plus_2_labels.contiguous().view(-1),
-                    ignore_index=-100,
-                )
+                if use_chunked_loss:
+                    mtp_loss = self._chunked_cross_entropy(mtp_hidden, t_plus_2_labels.contiguous())
+                else:
+                    mtp_logits = self.lm_head(mtp_hidden)
+                    mtp_loss = F.cross_entropy(
+                        mtp_logits.view(-1, self.config.vocab_size),
+                        t_plus_2_labels.contiguous().view(-1),
+                        ignore_index=-100,
+                    )
                 loss = loss + getattr(self.config, "mtp_loss_factor", 0.3) * mtp_loss
 
         if not return_dict:

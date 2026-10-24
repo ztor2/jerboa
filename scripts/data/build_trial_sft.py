@@ -150,7 +150,7 @@ def is_valid_token_sample(
     messages: List[Dict[str, str]],
     tokenizer,
     protocol: str = "chat",
-    max_tokens: int = 768,
+    max_tokens: int = 2048,
 ) -> bool:
     """Validate message integrity, protocol hygiene, masking absence, and token length budget."""
     if not messages or len(messages) < 2:
@@ -162,6 +162,8 @@ def is_valid_token_sample(
     has_user = False
     has_assistant = False
     total_chars = 0
+    max_user_chars = max(1800, int(max_tokens * 3.0))
+    max_asst_chars = max(3200, int(max_tokens * 4.5))
 
     for msg in messages:
         role = msg.get("role")
@@ -176,18 +178,18 @@ def is_valid_token_sample(
         total_chars += len(content)
 
         if role == "user":
-            if len(content) < 5 or len(content) > 1400:
+            if len(content) < 5 or len(content) > max_user_chars:
                 return False
             has_user = True
         elif role == "assistant":
-            if len(content) < 10 or len(content) > 2400:
+            if len(content) < 10 or len(content) > max_asst_chars:
                 return False
             has_assistant = True
 
     if not (has_user and has_assistant):
         return False
 
-    if total_chars > max_tokens * 3.5:
+    if total_chars > max_tokens * 5.0:
         return False
 
     full_prompt = "".join(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>\n" for m in messages)
@@ -195,7 +197,7 @@ def is_valid_token_sample(
     return len(token_ids) <= max_tokens
 
 
-def extract_from_71890(zip_path: Path, cat_targets: Dict[str, int], tokenizer, max_tokens: int = 768) -> List[Dict[str, Any]]:
+def extract_from_71890(zip_path: Path, cat_targets: Dict[str, int], tokenizer, max_tokens: int = 2048) -> List[Dict[str, Any]]:
     """Extract clean conversations from AI-Hub 71890 labeling zip."""
     samples = []
     if not zip_path.exists():
@@ -243,7 +245,7 @@ def extract_from_71890(zip_path: Path, cat_targets: Dict[str, int], tokenizer, m
     return samples
 
 
-def extract_from_71902(zip_path: Path, cat_targets: Dict[str, Tuple[int, str]], tokenizer, max_tokens: int = 768) -> List[Dict[str, Any]]:
+def extract_from_71902(zip_path: Path, cat_targets: Dict[str, Tuple[int, str]], tokenizer, max_tokens: int = 2048) -> List[Dict[str, Any]]:
     """Extract conversations from AI-Hub 71902 with explicit protocol routing."""
     samples = []
     if not zip_path.exists():
@@ -319,7 +321,7 @@ def extract_from_71902(zip_path: Path, cat_targets: Dict[str, Tuple[int, str]], 
     return samples
 
 
-def extract_from_kullm_v2(tokenizer, target_count: int = 3000, max_tokens: int = 768) -> List[Dict[str, Any]]:
+def extract_from_kullm_v2(tokenizer, target_count: int = 3000, max_tokens: int = 2048) -> List[Dict[str, Any]]:
     """Stream clean samples from open Korean dataset (nlpai-lab/kullm-v2)."""
     samples = []
     print(f"  [Open Data] Streaming from nlpai-lab/kullm-v2 (target: {target_count})...")
@@ -371,7 +373,7 @@ def extract_from_smoltalk(
     tokenizer,
     chat_target: int = 2600,
     tool_target: int = 400,
-    max_tokens: int = 768,
+    max_tokens: int = 2048,
 ) -> List[Dict[str, Any]]:
     """Stream and separate pure conversational samples vs standardized tool-calling samples from smoltalk."""
     samples = []
@@ -458,7 +460,7 @@ def build_trial_sft_dataset(
     output_dir: str = "data/sft",
     total_target: int = 15000,
     val_size: int = 750,
-    max_tokens: int = 768,
+    max_tokens: int = 2048,
     seed: int = 42,
     skip_open: bool = False,
 ):
@@ -581,7 +583,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=str, default="data/sft", help="Output directory")
     parser.add_argument("--total", type=int, default=15000, help="Total target samples")
     parser.add_argument("--val-size", type=int, default=750, help="Validation set size")
-    parser.add_argument("--max-tokens", type=int, default=768, help="Maximum sequence token length")
+    parser.add_argument("--max-tokens", type=int, default=2048, help="Maximum sequence token length")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--skip-open", action="store_true", help="Skip streaming open HF datasets")
     args = parser.parse_args()
