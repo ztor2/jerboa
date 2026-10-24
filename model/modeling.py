@@ -243,31 +243,35 @@ class JerboaAttention(nn.Module):
         attn_mask = None
         is_causal = False
 
-        if attention_mask is not None:
-            if attention_mask.dim() == 4:
-                attn_mask = attention_mask
-            elif attention_mask.dim() == 2:
-                # If padding mask is provided and contains padded positions (zeros)
-                if not (attention_mask == 1).all():
-                    mask_2d = attention_mask[:, None, None, :].to(dtype=query_states.dtype)
-                    attn_mask = (1.0 - mask_2d) * torch.finfo(query_states.dtype).min
+        has_padding = (
+            attention_mask is not None
+            and attention_mask.dim() == 2
+            and not (attention_mask == 1).all()
+        )
+        need_swa = (
+            self.is_sliding
+            and self.sliding_window is not None
+            and self.sliding_window < kv_len
+        )
 
-        if attn_mask is None and q_len > 1 and q_len == kv_len:
-            is_causal = True
-
-        # Apply Interleaved Sliding Window Attention (SWA) mask
-        if self.is_sliding and self.sliding_window is not None and self.sliding_window < q_len:
+        if attention_mask is not None and attention_mask.dim() == 4:
+            attn_mask = attention_mask
+        elif has_padding or need_swa:
             q_pos = torch.arange(past_len, past_len + q_len, device=query_states.device).unsqueeze(1)
             k_pos = torch.arange(0, kv_len, device=key_states.device).unsqueeze(0)
-            valid_mask = (k_pos <= q_pos) & (q_pos - k_pos < self.sliding_window)
-            swa_mask = torch.zeros((q_len, kv_len), dtype=query_states.dtype, device=query_states.device)
-            swa_mask = swa_mask.masked_fill(~valid_mask, torch.finfo(query_states.dtype).min)
-            swa_mask = swa_mask.unsqueeze(0).unsqueeze(0)
-            if attn_mask is not None:
-                attn_mask = attn_mask + swa_mask
-            else:
-                attn_mask = swa_mask
-            is_causal = False
+            valid_mask = k_pos <= q_pos
+            if need_swa:
+                valid_mask = valid_mask & (q_pos - k_pos < self.sliding_window)
+            valid_mask = valid_mask.unsqueeze(0).unsqueeze(0)
+            if has_padding:
+                pad_mask = attention_mask[:, None, None, :kv_len].bool()
+                valid_mask = valid_mask & pad_mask
+                # Prevent all-masked rows (NaN gradients) on edge-case empty rows
+                valid_mask = valid_mask | (k_pos == q_pos).unsqueeze(0).unsqueeze(0)
+            attn_mask = torch.zeros(valid_mask.shape, dtype=query_states.dtype, device=query_states.device)
+            attn_mask = attn_mask.masked_fill(~valid_mask, torch.finfo(query_states.dtype).min)
+        elif q_len > 1 and q_len == kv_len:
+            is_causal = True
 
         attn_output = F.scaled_dot_product_attention(
             query_states,

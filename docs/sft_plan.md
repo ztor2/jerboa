@@ -1,66 +1,70 @@
 # JerboaLM Supervised Fine-Tuning (SFT) Plan & Dataset Design
 
-This document details the data curation strategy, pipeline architecture, and recipe for the trial Supervised Fine-Tuning (SFT) of JerboaLM (~221.4M parameters).
+This document details the special token taxonomy, data harmonization strategy, pipeline architecture, and recipe for Supervised Fine-Tuning (SFT) of JerboaLM (~221.4M parameters).
 
 ---
 
 ## 1. Objectives & Scope
 
-- **Primary Goal**: Transition JerboaLM from a raw pre-trained causal base model (`checkpoints/pretrain/model`) into an instruction-following assistant.
-- **Focus**: Natural Korean and English turn-taking, respectful polite tone (해요체/하십시오체), clean markdown formatting, and reliable sequence termination (`<|im_end|>`).
-- **Scope Restriction**: Non-conversational creative/aesthetic data is excluded from the trial run; emphasis is placed strictly on instruction compliance, general reasoning, common sense, and programming assistance.
+- **Primary Goal**: Transition JerboaLM from a pre-trained causal base model (`checkpoints/pretrain/model`) into an instruction-following assistant supporting general conversation, step-by-step reasoning (`<think>`), code generation, and function calling (`<tool_call>`).
+- **Focus**: Natural Korean and English turn-taking, polite tone (해요체/하십시오체), clean markdown formatting, strict special token hygiene, and reliable sequence termination (`<|im_end|>`).
 
 ---
 
-## 2. Dataset Composition (Total: 13,560 Samples)
+## 2. Canonical Special Token Taxonomy (IDs 0–15)
 
-The trial SFT dataset is built by combining verified clean subsets of 2025/2026 AI-Hub data with high-signal open instruction datasets:
+The Jerboa 49,152-token vocabulary reserves IDs `0–15` for structural, reasoning, tool-use, and multimodal control:
 
-| Source | Category / Split | Count | Share (%) | Key Purpose |
-| :--- | :--- | :---: | :---: | :--- |
-| **Hugging Face (`nlpai-lab/kullm-v2`)** | Korean General QA & Instructions | 3,000 | 22.1% | Clear, concise Korean assistant responses, no masking issues |
-| **Hugging Face (`HuggingFaceTB/smoltalk`)** | English Conversational Assistant | 2,905 | 21.4% | Modern conversational English, markdown bullet formatting |
-| **AI-Hub `71902` (멀티턴 대화)** | English General Dialogue (1T) | 2,073 | 15.3% | Natural English dialogue turn-taking |
-| **AI-Hub `71902` (멀티턴 대화)** | Korean General Dialogue (1T/2T) | 1,297 | 9.6% | Natural native Korean honorifics and turn-taking |
-| **AI-Hub `71902` (멀티턴 대화)** | English Math & Reasoning (1T) | 1,989 | 14.7% | STEM reasoning and problem solving |
-| **AI-Hub `71902` (멀티턴 대화)** | English Code (1T) | 677 | 5.0% | Concise Python and algorithmic functions |
-| **AI-Hub `71902` (멀티턴 대화)** | Korean Math & Reasoning (1T) | 800 | 5.9% | Korean mathematical logic and deductive reasoning |
-| **AI-Hub `71890` (사후학습용)** | Korean Commonsense (03) | 400 | 2.9% | Filtered, clean historical & cultural commonsense QA |
-| **AI-Hub `71902` (멀티턴 대화)** | Korean & English Culture | 320 | 2.4% | Cultural knowledge without verbosity |
-| **AI-Hub `71902` (멀티턴 대화)** | Korean Code | 99 | 0.7% | Korean Python coding instruction |
-
-- **Language Balance**: Korean 42.7% (5,796 samples) / English 57.3% (7,764 samples).
-- **Split**: 12,882 Train (`data/sft/train.jsonl`, 18.04 MB) / 678 Val (`data/sft/val.jsonl`, 0.95 MB).
-
----
-
-## 3. Data Cleaning & Tokenizer Safeguards
-
-1. **Strict Masking Regex Filter**:
-   - Historical `#이름#`, `#주소#`, `#소속#` anomalies are completely eliminated via `MASK_PATTERN = re.compile(r"#(?:이름|주소|소속|전화번호|주민등록번호|기관|날짜|장소|상호|생년월일|계좌번호)#")`.
-   - Samples containing any matching pattern are discarded.
-2. **CoT Reasoning Tag Removal**:
-   - AI-Hub 71902 `<think>...</think>` internal monologues are stripped from assistant responses to retain direct, concise answers suitable for a 221M parameter model.
-3. **Hard Token Length Constraint ($\le 768$ Tokens)**:
-   - 100% of samples are pre-verified with the canonical 49,152 Jerboa tokenizer to fit within 768 tokens.
-   - Prevents truncation mid-generation and guarantees that the model always learns the termination token (`<|im_end|>`).
+| ID | Token | Category | Role & Protocol Specification |
+| :---: | :--- | :--- | :--- |
+| **0** | `<|pad|>` | Control | Right-padding token (masked with `-100` in labels) |
+| **1** | `<|im_start|>` | ChatML | Turn start delimiter (`<|im_start|>{role}\n`) |
+| **2** | `<|im_end|>` | ChatML | Turn end delimiter (`<|im_end|>\n`, EOS target) |
+| **3** | `<|unk|>` | Control | Unknown fallback token |
+| **4** | `<|endoftext|>` | Control | Document boundary token |
+| **5** | `<think>` | Reasoning | Chain-of-Thought (CoT) internal reasoning block start |
+| **6** | `</think>` | Reasoning | Chain-of-Thought (CoT) internal reasoning block end |
+| **7** | `<answer>` | Reasoning | Final boxed/extracted answer start (aligned with GRPO verifier) |
+| **8** | `</answer>` | Reasoning | Final boxed/extracted answer end |
+| **9** | `<|image|>` | Multimodal | Vision encoder patch placeholder (`config.image_token_id = 9`) |
+| **10** | `<|audio|>` | Multimodal | Audio encoder frame placeholder (`config.audio_token_id = 10`) |
+| **11** | `<tool_call>` | Tool Use | Assistant JSON function/tool invocation block start |
+| **12** | `</tool_call>` | Tool Use | Assistant JSON function/tool invocation block end |
+| **13** | `<tool_response>` | Tool Use | Environment/tool execution output start (`role == "tool"`) |
+| **14** | `</tool_response>` | Tool Use | Environment/tool execution output end |
+| **15** | `<|quad_space|>` | Code | 4-space indentation token |
 
 ---
 
-## 4. Training Pipeline Enhancements (`pipeline/sft.py`)
+## 3. Four-Protocol Dataset Harmonization (`scripts/data/build_trial_sft.py`)
 
-- **ChatML Response Loss Masking**:
-  - The role header (`<|im_start|>{role}\n`) is masked with `labels = -100` across all turns.
-  - Non-assistant turns (`system`, `user`, `tool`) are completely masked with `-100`.
-  - Only the assistant response body and its trailing `<|im_end|>\n` receive gradient updates.
-- **Cosine Learning Rate Schedule**:
-  - `get_cosine_schedule_with_warmup` with 5% warmup steps and cosine decay down to 0.
-  - Default learning rate: `1.0e-4` (conservative to protect pre-trained base representations).
-- **Apple Silicon (MPS) Resource Guard & Stability**:
-  - `grad_accum: 2` with `batch_size: 4` -> effective batch size of 8 (~1,610 optimizer steps/epoch).
-  - `SystemResourceGuard`: Enforces 60% MPS allocation limit and 85% system RAM threshold; renices training process to background priority to prevent macOS UI stuttering.
-  - Periodic MPS memory cleanup: `torch.mps.empty_cache()` every 50 global steps.
-  - `SleepGuard`: Invokes `caffeinate` to prevent system sleep during long training runs.
-  - Validation set loss evaluation performed at epoch completion.
-- **Resume & Fault Tolerance**:
-  - Full optimizer and scheduler state preservation in step/epoch checkpoints.
+Rather than discarding reasoning or tool-use samples—or mixing unconditioned special tags into plain chat—all sources are deterministically routed into four conditioned protocols:
+
+| Protocol | System Prompt Conditioning | Assistant Target Structure | Share (%) |
+| :--- | :--- | :--- | :---: |
+| **`chat`** | `You are Jerboa, a helpful, respectful, and intelligent AI assistant.` | Pure conversational response (zero `<think>` or `<tool_call>` tags) | ~78.7% |
+| **`reasoning`** | `...Reason step-by-step before providing your final answer.` | `<think>\n{CoT}\n</think>\n{Solution}` (+ `<answer>{X}</answer>` on math) | ~11.0% |
+| **`code`** | `You are Jerboa, a helpful, respectful, and intelligent AI assistant.` | Concise explanation + Markdown fenced code blocks | ~7.1% |
+| **`tool_call`** | `...with tool-calling capabilities.\n\nYou have access to the following tools:\n<tools>...</tools>` | `<tool_call>[...]</tool_call>` and `<tool_response>...</tool_response>` | ~3.3% |
+
+- **Dataset Split (`data/sft/`)**:
+  - `train.jsonl`: 11,655 unique samples ($\le 768$ tokens, 100% tag-balanced).
+  - `val.jsonl`: 613 unique samples.
+  - `sample.json`: Representative Korean/English samples across all four protocols.
+- **Strict Hygiene Checks**:
+  - Regex filtering eliminates PII masking placeholders (`#이름#`, `#주소#`, `#소속#`).
+  - `validate_protocol_hygiene()` verifies 100% opening/closing tag symmetry (`<think>` == `</think>`, `<answer>` == `</answer>`, `<tool_call>` == `</tool_call>`) and ensures zero cross-protocol tag leakage.
+
+---
+
+## 4. Model & Training Pipeline Safeguards (`model/modeling.py`, `pipeline/sft.py`)
+
+- **Causal + Padding Attention Masking (`model/modeling.py`)**:
+  - When a 2D right-padded `attention_mask` is supplied during SFT, `JerboaAttention.forward` explicitly combines the lower-triangular causal mask (`k_pos <= q_pos`), optional Sliding Window Attention mask, and 2D padding mask so padded batches strictly preserve autoregressive causality.
+- **ChatML Response Loss Masking (`pipeline/sft.py`)**:
+  - Role headers (`<|im_start|>{role}\n`) and non-assistant turns (`system`, `user`, `tool`) are masked with `labels = -100`.
+  - Only `assistant` response bodies (including `<think>...</think>`, `<answer>...</answer>`, `<tool_call>...</tool_call>`, and trailing `<|im_end|>\n`) receive gradient updates.
+- **Apple Silicon (MPS) Stability**:
+  - Gradient checkpointing enabled (`gradient_checkpointing: true`), reducing 28-layer activation memory from ~13 GB to ~2.0 GB without affecting gradient precision.
+  - `batch_size: 2`, `grad_accum: 4` (Effective Batch Size = 8).
+  - `SystemResourceGuard` (`max_mem_fraction: 0.7`, `system_ram_limit: 85.0%`) and `SleepGuard` (`caffeinate`).

@@ -54,8 +54,8 @@ class JerboaConfig(PretrainedConfig):
         # Multimodal parameters
         vision_hidden_size: int = 768,
         audio_hidden_size: int = 512,
-        image_token_id: int = 32000,
-        audio_token_id: int = 32001,
+        image_token_id: int = 9,
+        audio_token_id: int = 10,
         vision_spatial_merge_size: int = 2,
         **kwargs,
     ):
